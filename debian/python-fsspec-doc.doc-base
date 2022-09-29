@@ -1,0 +1,9 @@
+Document: python-fsspec-doc
+Title: python-fsspec Documetantion
+Author: Martin Durant
+Abstract: A specification that Python filesystems should adhere to
+Section: Programming/Python
+
+Format: HTML
+Index: /usr/share/doc/python-fsspec-doc/html/index.html
+Files: /usr/share/doc/python-fsspec-doc/html/*.html

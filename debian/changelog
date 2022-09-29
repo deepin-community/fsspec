@@ -1,0 +1,37 @@
+fsspec (0.8.4-1) unstable; urgency=medium
+
+  [Emmanuel Arias]
+  * New upstream release.
+  * d/control: Bump debhelper-compat to 13.
+  * d/salsa-ci.yml: enable salsa-ci.
+  * d/rules: fix PYBUILD_NAME.
+
+  [Debian Janitor ]
+  * Set upstream metadata fields: Bug-Database, Bug-Submit, Repository,
+    Repository-Browse.
+  * Update standards version to 4.5.0, no changes needed.
+  * Apply multi-arch hints.
+    + python-fsspec-doc: Add Multi-Arch: foreign.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Fri, 16 Oct 2020 13:41:33 -0300
+
+fsspec (0.6.1-0.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * New upstream version.
+
+ -- Matthias Klose <doko@debian.org>  Wed, 04 Dec 2019 13:48:56 +0100
+
+fsspec (0.6.0-1.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Source-only upload, no changes.
+
+ -- Matthias Klose <doko@debian.org>  Wed, 04 Dec 2019 12:54:50 +0100
+
+fsspec (0.6.0-1) unstable; urgency=medium
+
+  * Team upload.
+  * Initial release. (Closes: #944198)
+
+ -- Emmanuel Arias <emmanuelarias30@gmail.com>  Mon, 18 Nov 2019 20:04:45 -0300

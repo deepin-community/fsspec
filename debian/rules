@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+# See debhelper(7) (uncomment to enable)
+# output every command that modifies files on the build system.
+#export DH_VERBOSE = 1
+
+export PYBUILD_NAME=fsspec
+export http_proxy = http://127.0.9.1:9
+
+%:
+	dh $@ --with sphinxdoc,python3 --buildsystem=pybuild
+
+
+override_dh_auto_build:
+	dh_auto_build
+	${MAKE} -C docs html
+
+override_dh_auto_clean:
+	dh_auto_clean
+	${MAKE} -C docs clean
