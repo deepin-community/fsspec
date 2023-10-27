@@ -1,12 +1,19 @@
-from hashlib import sha256
+from __future__ import annotations
+
+import contextlib
+import logging
 import math
 import os
 import pathlib
 import re
+import sys
+import tempfile
+from functools import partial
+from hashlib import md5
+from importlib.metadata import version
 from urllib.parse import urlsplit
 
-
-DEFAULT_BLOCK_SIZE = 5 * 2 ** 20
+DEFAULT_BLOCK_SIZE = 5 * 2**20
 
 
 def infer_storage_options(urlpath, inherit_storage_options=None):
@@ -30,8 +37,9 @@ def infer_storage_options(urlpath, inherit_storage_options=None):
     >>> infer_storage_options('/mnt/datasets/test.csv')  # doctest: +SKIP
     {"protocol": "file", "path", "/mnt/datasets/test.csv"}
     >>> infer_storage_options(
-    ...          'hdfs://username:pwd@node:123/mnt/datasets/test.csv?q=1',
-    ...          inherit_storage_options={'extra': 'value'})  # doctest: +SKIP
+    ...     'hdfs://username:pwd@node:123/mnt/datasets/test.csv?q=1',
+    ...     inherit_storage_options={'extra': 'value'},
+    ... )  # doctest: +SKIP
     {"protocol": "hdfs", "username": "username", "password": "pwd",
     "host": "node", "port": 123, "path": "/mnt/datasets/test.csv",
     "url_query": "q=1", "extra": "value"}
@@ -68,7 +76,7 @@ def infer_storage_options(urlpath, inherit_storage_options=None):
         # https://github.com/dask/dask/issues/1417
         options["host"] = parsed_path.netloc.rsplit("@", 1)[-1].rsplit(":", 1)[0]
 
-        if protocol in ("s3", "gcs", "gs"):
+        if protocol in ("s3", "s3a", "gcs", "gs"):
             options["path"] = options["host"] + options["path"]
         else:
             options["host"] = options["host"]
@@ -95,16 +103,17 @@ def update_storage_options(options, inherited=None):
         inherited = {}
     collisions = set(options) & set(inherited)
     if collisions:
-        collisions = "\n".join("- %r" % k for k in collisions)
-        raise KeyError(
-            "Collision between inferred and specified storage "
-            "options:\n%s" % collisions
-        )
+        for collision in collisions:
+            if options.get(collision) != inherited.get(collision):
+                raise KeyError(
+                    "Collision between inferred and specified storage "
+                    "option:\n%s" % collision
+                )
     options.update(inherited)
 
 
 # Compression extensions registered via fsspec.compression.register_compression
-compressions = {}
+compressions: dict[str, str] = {}
 
 
 def infer_compression(filename):
@@ -114,7 +123,7 @@ def infer_compression(filename):
     extension. This includes builtin (gz, bz2, zip) compressions, as well as
     optional compressions. See fsspec.compression.register_compression.
     """
-    extension = os.path.splitext(filename)[-1].strip(".")
+    extension = os.path.splitext(filename)[-1].strip(".").lower()
     if extension in compressions:
         return compressions[extension]
 
@@ -236,14 +245,14 @@ def read_block(f, offset, length, delimiter=None, split_before=False):
     """
     if delimiter:
         f.seek(offset)
-        found_start_delim = seek_delimiter(f, delimiter, 2 ** 16)
+        found_start_delim = seek_delimiter(f, delimiter, 2**16)
         if length is None:
             return f.read()
         start = f.tell()
         length -= start - offset
 
         f.seek(start + length)
-        found_end_delim = seek_delimiter(f, delimiter, 2 ** 16)
+        found_end_delim = seek_delimiter(f, delimiter, 2**16)
         end = f.tell()
 
         # Adjust split location to before delimiter iff seek found the
@@ -275,7 +284,11 @@ def tokenize(*args, **kwargs):
     """
     if kwargs:
         args += (kwargs,)
-    return sha256(str(args).encode()).hexdigest()
+    try:
+        return md5(str(args).encode()).hexdigest()
+    except ValueError:
+        # FIPS systems: https://github.com/fsspec/filesystem_spec/issues/380
+        return md5(str(args).encode(), usedforsecurity=False).hexdigest()
 
 
 def stringify_path(filepath):
@@ -291,8 +304,8 @@ def stringify_path(filepath):
 
     Notes
     -----
-    Objects supporting the fspath protocol (Python 3.6+) are coerced
-    according to its __fspath__ method.
+    Objects supporting the fspath protocol are coerced according to its
+    __fspath__ method.
 
     For backwards compatibility with older Python version, pathlib.Path
     objects are specially coerced.
@@ -300,11 +313,16 @@ def stringify_path(filepath):
     Any other object is passed through unchanged, which includes bytes,
     strings, buffers, or anything else that's not even path-like.
     """
-    if hasattr(filepath, "__fspath__"):
+    if isinstance(filepath, str):
+        return filepath
+    elif hasattr(filepath, "__fspath__"):
         return filepath.__fspath__()
     elif isinstance(filepath, pathlib.Path):
         return str(filepath)
-    return filepath
+    elif hasattr(filepath, "path"):
+        return filepath.path
+    else:
+        return filepath
 
 
 def make_instance(cls, args, kwargs):
@@ -326,7 +344,7 @@ def common_prefix(paths):
     return "/".join(parts[0][:i])
 
 
-def other_paths(paths, path2, is_dir=None):
+def other_paths(paths, path2, exists=False, flatten=False):
     """In bulk file operations, construct a new file tree from a list of files
 
     Parameters
@@ -336,26 +354,31 @@ def other_paths(paths, path2, is_dir=None):
     path2: str or list of str
         Root to construct the new list in. If this is already a list of str, we just
         assert it has the right number of elements.
-    is_dir: bool (optional)
-        For the special case where the input in one element, whether to regard the value
-        as the target path, or as a directory to put a file path within. If None, a
-        directory is inferred if the path ends in '/'
+    exists: bool (optional)
+        For a str destination, it is already exists (and is a dir), files should
+        end up inside.
+    flatten: bool (optional)
+        Whether to flatten the input directory tree structure so that the output files
+        are in the same directory.
 
     Returns
     -------
     list of str
     """
+
     if isinstance(path2, str):
-        is_dir = is_dir or path2.endswith("/")
         path2 = path2.rstrip("/")
-        if len(paths) > 1:
-            cp = common_prefix(paths)
-            path2 = [p.replace(cp, path2, 1) for p in paths]
+
+        if flatten:
+            path2 = ["/".join((path2, p.split("/")[-1])) for p in paths]
         else:
-            if is_dir:
-                path2 = [path2.rstrip("/") + "/" + paths[0].rsplit("/")[-1]]
+            cp = common_prefix(paths)
+            if exists:
+                cp = cp.rsplit("/", 1)[0]
+            if not cp and all(not s.startswith("/") for s in paths):
+                path2 = ["/".join([path2, p]) for p in paths]
             else:
-                path2 = [path2]
+                path2 = [p.replace(cp, path2, 1) for p in paths]
     else:
         assert len(paths) == len(path2)
     return path2
@@ -363,6 +386,13 @@ def other_paths(paths, path2, is_dir=None):
 
 def is_exception(obj):
     return isinstance(obj, BaseException)
+
+
+def isfilelike(f):
+    for attr in ["read", "close", "tell"]:
+        if not hasattr(f, attr):
+            return False
+    return True
 
 
 def get_protocol(url):
@@ -373,7 +403,7 @@ def get_protocol(url):
 
 
 def can_be_local(path):
-    """Can the given URL be used wih open_local?"""
+    """Can the given URL be used with open_local?"""
     from fsspec import get_filesystem_class
 
     try:
@@ -383,15 +413,163 @@ def can_be_local(path):
         return False
 
 
-def setup_logger(logname, level="DEBUG"):
-    import logging
+def get_package_version_without_import(name):
+    """For given package name, try to find the version without importing it
 
-    logger = logging.getLogger(logname)
+    Import and package.__version__ is still the backup here, so an import
+    *might* happen.
+
+    Returns either the version string, or None if the package
+    or the version was not readily  found.
+    """
+    if name in sys.modules:
+        mod = sys.modules[name]
+        if hasattr(mod, "__version__"):
+            return mod.__version__
+    try:
+        return version(name)
+    except:  # noqa: E722
+        pass
+    try:
+        import importlib
+
+        mod = importlib.import_module(name)
+        return mod.__version__
+    except (ImportError, AttributeError):
+        return None
+
+
+def setup_logging(logger=None, logger_name=None, level="DEBUG", clear=True):
+    if logger is None and logger_name is None:
+        raise ValueError("Provide either logger object or logger name")
+    logger = logger or logging.getLogger(logger_name)
     handle = logging.StreamHandler()
     formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s " "- %(message)s"
+        "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s -- %(message)s"
     )
     handle.setFormatter(formatter)
+    if clear:
+        logger.handlers.clear()
     logger.addHandler(handle)
     logger.setLevel(level)
     return logger
+
+
+def _unstrip_protocol(name, fs):
+    return fs.unstrip_protocol(name)
+
+
+def mirror_from(origin_name, methods):
+    """Mirror attributes and methods from the given
+    origin_name attribute of the instance to the
+    decorated class"""
+
+    def origin_getter(method, self):
+        origin = getattr(self, origin_name)
+        return getattr(origin, method)
+
+    def wrapper(cls):
+        for method in methods:
+            wrapped_method = partial(origin_getter, method)
+            setattr(cls, method, property(wrapped_method))
+        return cls
+
+    return wrapper
+
+
+@contextlib.contextmanager
+def nullcontext(obj):
+    yield obj
+
+
+def merge_offset_ranges(paths, starts, ends, max_gap=0, max_block=None, sort=True):
+    """Merge adjacent byte-offset ranges when the inter-range
+    gap is <= `max_gap`, and when the merged byte range does not
+    exceed `max_block` (if specified). By default, this function
+    will re-order the input paths and byte ranges to ensure sorted
+    order. If the user can guarantee that the inputs are already
+    sorted, passing `sort=False` will skip the re-ordering.
+    """
+    # Check input
+    if not isinstance(paths, list):
+        raise TypeError
+    if not isinstance(starts, list):
+        starts = [starts] * len(paths)
+    if not isinstance(ends, list):
+        ends = [starts] * len(paths)
+    if len(starts) != len(paths) or len(ends) != len(paths):
+        raise ValueError
+
+    # Early Return
+    if len(starts) <= 1:
+        return paths, starts, ends
+
+    starts = [s or 0 for s in starts]
+    # Sort by paths and then ranges if `sort=True`
+    if sort:
+        paths, starts, ends = [
+            list(v)
+            for v in zip(
+                *sorted(
+                    zip(paths, starts, ends),
+                )
+            )
+        ]
+
+    if paths:
+        # Loop through the coupled `paths`, `starts`, and
+        # `ends`, and merge adjacent blocks when appropriate
+        new_paths = paths[:1]
+        new_starts = starts[:1]
+        new_ends = ends[:1]
+        for i in range(1, len(paths)):
+            if paths[i] == paths[i - 1] and new_ends[-1] is None:
+                continue
+            elif (
+                paths[i] != paths[i - 1]
+                or ((starts[i] - new_ends[-1]) > max_gap)
+                or ((max_block is not None and (ends[i] - new_starts[-1]) > max_block))
+            ):
+                # Cannot merge with previous block.
+                # Add new `paths`, `starts`, and `ends` elements
+                new_paths.append(paths[i])
+                new_starts.append(starts[i])
+                new_ends.append(ends[i])
+            else:
+                # Merge with previous block by updating the
+                # last element of `ends`
+                new_ends[-1] = ends[i]
+        return new_paths, new_starts, new_ends
+
+    # `paths` is empty. Just return input lists
+    return paths, starts, ends
+
+
+def file_size(filelike):
+    """Find length of any open read-mode file-like"""
+    pos = filelike.tell()
+    try:
+        return filelike.seek(0, 2)
+    finally:
+        filelike.seek(pos)
+
+
+@contextlib.contextmanager
+def atomic_write(path: str, mode: str = "wb"):
+    """
+    A context manager that opens a temporary file next to `path` and, on exit,
+    replaces `path` with the temporary file, thereby updating `path`
+    atomically.
+    """
+    fd, fn = tempfile.mkstemp(
+        dir=os.path.dirname(path), prefix=os.path.basename(path) + "-"
+    )
+    try:
+        with open(fd, mode) as fp:
+            yield fp
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(fn)
+        raise
+    else:
+        os.replace(fn, path)

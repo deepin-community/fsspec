@@ -1,7 +1,10 @@
-import pygit2
-from fsspec.spec import AbstractFileSystem
-from .memory import MemoryFile
 import os
+
+import pygit2
+
+from fsspec.spec import AbstractFileSystem
+
+from .memory import MemoryFile
 
 
 class GitFileSystem(AbstractFileSystem):
@@ -11,14 +14,22 @@ class GitFileSystem(AbstractFileSystem):
     """
 
     root_marker = ""
+    cachable = True
 
-    def __init__(self, path=None, ref=None, **kwargs):
+    def __init__(self, path=None, fo=None, ref=None, **kwargs):
         """
 
         Parameters
         ----------
         path: str (optional)
-            Local location of the repo (uses current directory if not given)
+            Local location of the repo (uses current directory if not given).
+            May be deprecated in favour of ``fo``. When used with a higher
+            level function such as fsspec.open(), may be of the form
+            "git://[path-to-repo[:]][ref@]path/to/file" (but the actual
+            file path should not contain "@" or ":").
+        fo: str (optional)
+            Same as ``path``, but passed as part of a chained URL. This one
+            takes precedence if both are given.
         ref: str (optional)
             Reference to work with, could be a hash, tag or branch name. Defaults
             to current working tree. Note that ``ls`` and ``open`` also take hash,
@@ -26,12 +37,17 @@ class GitFileSystem(AbstractFileSystem):
         kwargs
         """
         super().__init__(**kwargs)
-        self.repo = pygit2.Repository(path or os.getcwd())
+        self.repo = pygit2.Repository(fo or path or os.getcwd())
         self.ref = ref or "master"
 
     @classmethod
     def _strip_protocol(cls, path):
-        return super()._strip_protocol(path).lstrip("/")
+        path = super()._strip_protocol(path).lstrip("/")
+        if ":" in path:
+            path = path.split(":", 1)[1]
+        if "@" in path:
+            path = path.split("@", 1)[1]
+        return path.lstrip("/")
 
     def _path_to_object(self, path, ref):
         comm, ref = self.repo.resolve_refish(ref or self.ref)
@@ -41,6 +57,17 @@ class GitFileSystem(AbstractFileSystem):
             if part and isinstance(tree, pygit2.Tree):
                 tree = tree[part]
         return tree
+
+    @staticmethod
+    def _get_kwargs_from_urls(path):
+        if path.startswith("git://"):
+            path = path[6:]
+        out = {}
+        if ":" in path:
+            out["path"], path = path.split(":", 1)
+        if "@" in path:
+            out["ref"], path = path.split("@", 1)
+        return out
 
     def ls(self, path, detail=True, ref=None, **kwargs):
         path = self._strip_protocol(path)
@@ -94,7 +121,7 @@ class GitFileSystem(AbstractFileSystem):
         autocommit=True,
         cache_options=None,
         ref=None,
-        **kwargs
+        **kwargs,
     ):
         obj = self._path_to_object(path, ref or self.ref)
         return MemoryFile(data=obj.data)

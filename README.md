@@ -1,6 +1,8 @@
 # filesystem_spec
 
-[![Build Status](https://travis-ci.org/intake/filesystem_spec.svg?branch=master)](https://travis-ci.org/martindurant/filesystem_spec)
+[![PyPI version](https://badge.fury.io/py/fsspec.svg)](https://pypi.python.org/pypi/fsspec/)
+[![Anaconda-Server Badge](https://anaconda.org/conda-forge/fsspec/badges/version.svg)](https://anaconda.org/conda-forge/fsspec)
+![Build](https://github.com/fsspec/filesystem_spec/workflows/CI/badge.svg)
 [![Docs](https://readthedocs.org/projects/filesystem-spec/badge/?version=latest)](https://filesystem-spec.readthedocs.io/en/latest/?badge=latest)
 
 A specification for pythonic filesystems.
@@ -10,10 +12,17 @@ A specification for pythonic filesystems.
 ```bash
 pip install fsspec
 ```
-or
+
+would install the base fsspec. Various optionally supported features might require specification of custom
+extra require, e.g. `pip install fsspec[ssh]` will install dependencies for `ssh` backends support.
+Use `pip install fsspec[full]` for installation of all known extra dependencies.
+
+Up-to-date package also provided through conda-forge distribution:
+
 ```bash
 conda install -c conda-forge fsspec
 ```
+
 
 ## Purpose
 
@@ -31,43 +40,38 @@ Please refer to [RTD](https://filesystem-spec.readthedocs.io/en/latest/?badge=la
 
 ## Develop
 
-fsspec uses [tox](https://tox.readthedocs.io/en/latest/) and
-[tox-conda](https://github.com/tox-dev/tox-conda) to manage dev and test
-environments. First, install conda with tox and tox-conda in a base environment
-(eg. `conda install -c conda-forge tox tox-conda`). Calls to `tox` can then be
-used to configure a development environment and run tests.
-
-First, setup a development conda environment via `tox -e dev`. This will
-install fspec dependencies, test & dev tools, and install fsspec in develop
-mode. Then, activate the dev environment under `.tox/dev` via `conda activate .tox/dev`.
+fsspec uses GitHub Actions for CI. Environment files can be found
+in the "ci/" directory. Note that the main environment is called "py38",
+but it is expected that the version of python installed be adjustable at
+CI runtime. For local use, pick a version suitable for you.
 
 ### Testing
 
-Tests can be run directly in the activated dev environment via `pytest fsspec`.
-
-The full fsspec test suite can be run via `tox`, which will setup and execute
-tests against multiple dependency versions in isolated environment. Run `tox
--av` to list available test environments, select environments via `tox -e <env>`.
+Tests can be run in the dev environment, if activated, via ``pytest fsspec``.
 
 The full fsspec suite requires a system-level docker, docker-compose, and fuse
-installation. See `ci/install.sh` for a detailed installation example.
+installation. If only making changes to one backend implementation, it is
+not generally necessary to run all tests locally.
+
+It is expected that contributors ensure that any change to fsspec does not
+cause issues or regressions for either other fsspec-related packages such
+as gcsfs and s3fs, nor for downstream users of fsspec. The "downstream" CI
+run and corresponding environment file run a set of tests from the dask
+test suite, and very minimal tests against pandas and zarr from the
+test_downstream.py module in this repo.
 
 ### Code Formatting
 
 fsspec uses [Black](https://black.readthedocs.io/en/stable) to ensure
-a consistent code format throughout the project. ``black`` is automatically
-installed in the tox dev env, activated via `conda activate .tox/dev`.
-
-Then, run `black fsspec` from the root of the filesystem_spec repository to
+a consistent code format throughout the project.
+Run ``black fsspec`` from the root of the filesystem_spec repository to
 auto-format your code. Additionally, many editors have plugins that will apply
-`black` as you edit files.
+``black`` as you edit files. ``black`` is included in the ``tox`` environments.
 
 Optionally, you may wish to setup [pre-commit hooks](https://pre-commit.com) to
-automatically run `black` when you make a git commit. ``black`` is automatically
-installed in the tox dev env, activated via `conda activate .tox/dev`.
-
-Then, run `pre-commit install --install-hooks` from the root of the
-filesystem_spec repository to setup pre-commit hooks. `black` will now be run
+automatically run ``black`` when you make a git commit.
+Run ``pre-commit install --install-hooks`` from the root of the
+filesystem_spec repository to setup pre-commit hooks. ``black`` will now be run
 before you commit, reformatting any changed files. You can format without
-committing via `pre-commit run` or skip these checks with `git commit
---no-verify`.
+committing via ``pre-commit run`` or skip these checks with ``git commit
+--no-verify``.

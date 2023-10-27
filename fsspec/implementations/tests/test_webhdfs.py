@@ -1,7 +1,10 @@
 import pickle
-import pytest
+import shlex
 import subprocess
 import time
+
+import pytest
+
 import fsspec
 
 requests = pytest.importorskip("requests")
@@ -11,14 +14,14 @@ from fsspec.implementations.webhdfs import WebHDFS  # noqa: E402
 
 @pytest.fixture(scope="module")
 def hdfs_cluster():
-    cmd0 = "htcluster shutdown".split()
+    cmd0 = shlex.split("htcluster shutdown")
     try:
         subprocess.check_output(cmd0, stderr=subprocess.STDOUT)
     except FileNotFoundError:
         pytest.skip("htcluster not found")
     except subprocess.CalledProcessError as ex:
         pytest.skip("htcluster failed: " + ex.output.decode())
-    cmd1 = "htcluster startup --image base".split()
+    cmd1 = shlex.split("htcluster startup --image base")
     subprocess.check_output(cmd1)
     try:
         while True:
@@ -113,3 +116,22 @@ def test_workflow_transaction(hdfs_cluster):
 
     w.rm("/user/testuser/testrun", recursive=True)
     assert not w.exists(fn)
+
+
+def test_webhdfs_cp_file(hdfs_cluster):
+    fs = WebHDFS(
+        hdfs_cluster, user="testuser", data_proxy={"worker.example.com": "localhost"}
+    )
+
+    src, dst = "/user/testuser/testrun/f1", "/user/testuser/testrun/f2"
+
+    fs.mkdir("/user/testuser/testrun")
+
+    with fs.open(src, "wb") as f:
+        f.write(b"hello")
+
+    fs.cp_file(src, dst)
+
+    assert fs.exists(src)
+    assert fs.exists(dst)
+    assert fs.cat(src) == fs.cat(dst)

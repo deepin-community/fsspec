@@ -1,8 +1,10 @@
 import base64
 import io
-import fsspec
 import re
+
 import requests
+
+import fsspec
 
 
 class JupyterFileSystem(fsspec.AbstractFileSystem):
@@ -25,7 +27,7 @@ class JupyterFileSystem(fsspec.AbstractFileSystem):
         if "?" in url:
             if tok is None:
                 try:
-                    tok = re.findall("token=([a-f0-9]+)", url)[0]
+                    tok = re.findall("token=([a-z0-9]+)", url)[0]
                 except IndexError as e:
                     raise ValueError("Could not determine token") from e
             url = url.split("?", 1)[0]
@@ -57,7 +59,7 @@ class JupyterFileSystem(fsspec.AbstractFileSystem):
             return out
         return [o["name"] for o in out]
 
-    def cat_file(self, path):
+    def cat_file(self, path, start=None, end=None, **kwargs):
         path = self._strip_protocol(path)
         r = self.session.get(self.url + "/" + path)
         if r.status_code == 404:
@@ -66,9 +68,10 @@ class JupyterFileSystem(fsspec.AbstractFileSystem):
         out = r.json()
         if out["format"] == "text":
             # data should be binary
-            return out["content"].encode()
+            b = out["content"].encode()
         else:
-            return base64.b64decode(out["content"])
+            b = base64.b64decode(out["content"])
+        return b[start:end]
 
     def pipe_file(self, path, value, **_):
         path = self._strip_protocol(path)
@@ -76,7 +79,7 @@ class JupyterFileSystem(fsspec.AbstractFileSystem):
             "name": path.rsplit("/", 1)[-1],
             "path": path,
             "size": len(value),
-            "content": base64.b64encode(value),
+            "content": base64.b64encode(value).decode(),
             "format": "base64",
             "type": "file",
         }

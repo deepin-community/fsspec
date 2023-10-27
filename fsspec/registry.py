@@ -1,47 +1,20 @@
+from __future__ import annotations
+
 import importlib
-from distutils.version import LooseVersion
+import types
+import warnings
 
 __all__ = ["registry", "get_filesystem_class", "default"]
 
-# mapping protocol: implementation class object
-_registry = {}  # internal, mutable
+# internal, mutable
+_registry: dict[str, type] = {}
+
+# external, immutable
+registry = types.MappingProxyType(_registry)
+default = "file"
 
 
-class ReadOnlyError(TypeError):
-    pass
-
-
-class ReadOnlyRegistry(dict):
-    """Dict-like registry, but immutable
-
-    Maps backend name to implementation class
-
-    To add backend implementations, use ``register_implementation``
-    """
-
-    def __init__(self, target):
-        self.target = target
-
-    def __getitem__(self, item):
-        return self.target[item]
-
-    def __delitem__(self, key):
-        raise ReadOnlyError
-
-    def __setitem__(self, key, value):
-        raise ReadOnlyError
-
-    def clear(self):
-        raise ReadOnlyError
-
-    def __contains__(self, item):
-        return item in self.target
-
-    def __iter__(self):
-        yield from self.target
-
-
-def register_implementation(name, cls, clobber=True, errtxt=None):
+def register_implementation(name, cls, clobber=False, errtxt=None):
     """Add implementation class to the registry
 
     Parameters
@@ -63,25 +36,26 @@ def register_implementation(name, cls, clobber=True, errtxt=None):
     """
     if isinstance(cls, str):
         if name in known_implementations and clobber is False:
-            raise ValueError(
-                "Name (%s) already in the known_implementations and clobber "
-                "is False" % name
-            )
-        known_implementations[name] = {
-            "class": cls,
-            "err": errtxt or "%s import failed for protocol %s" % (cls, name),
-        }
+            if cls != known_implementations[name]["class"]:
+                raise ValueError(
+                    "Name (%s) already in the known_implementations and clobber "
+                    "is False" % name
+                )
+        else:
+            known_implementations[name] = {
+                "class": cls,
+                "err": errtxt or "%s import failed for protocol %s" % (cls, name),
+            }
 
     else:
         if name in registry and clobber is False:
-            raise ValueError(
-                "Name (%s) already in the registry and clobber is False" % name
-            )
-        _registry[name] = cls
+            if _registry[name] is not cls:
+                raise ValueError(
+                    "Name (%s) already in the registry and clobber is False" % name
+                )
+        else:
+            _registry[name] = cls
 
-
-registry = ReadOnlyRegistry(_registry)
-default = "file"
 
 # protocols mapped to the class which implements them. This dict can
 # updated with register_implementation
@@ -104,6 +78,7 @@ known_implementations = {
         "err": 'HTTPFileSystem requires "requests" and "aiohttp" to be installed',
     },
     "zip": {"class": "fsspec.implementations.zip.ZipFileSystem"},
+    "tar": {"class": "fsspec.implementations.tar.TarFileSystem"},
     "gcs": {
         "class": "gcsfs.GCSFileSystem",
         "err": "Please install gcsfs to access Google Storage",
@@ -126,7 +101,11 @@ known_implementations = {
     },
     "ftp": {"class": "fsspec.implementations.ftp.FTPFileSystem"},
     "hdfs": {
-        "class": "fsspec.implementations.hdfs.PyArrowHDFS",
+        "class": "fsspec.implementations.arrow.HadoopFileSystem",
+        "err": "pyarrow and local java libraries required for HDFS",
+    },
+    "arrow_hdfs": {
+        "class": "fsspec.implementations.arrow.HadoopFileSystem",
         "err": "pyarrow and local java libraries required for HDFS",
     },
     "webhdfs": {
@@ -134,6 +113,20 @@ known_implementations = {
         "err": 'webHDFS access requires "requests" to be installed',
     },
     "s3": {"class": "s3fs.S3FileSystem", "err": "Install s3fs to access S3"},
+    "s3a": {"class": "s3fs.S3FileSystem", "err": "Install s3fs to access S3"},
+    "wandb": {"class": "wandbfs.WandbFS", "err": "Install wandbfs to access wandb"},
+    "oci": {
+        "class": "ocifs.OCIFileSystem",
+        "err": "Install ocifs to access OCI Object Storage",
+    },
+    "ocilake": {
+        "class": "ocifs.OCIFileSystem",
+        "err": "Install ocifs to access OCI Data Lake",
+    },
+    "asynclocal": {
+        "class": "morefs.asyn_local.AsyncLocalFileSystem",
+        "err": "Install 'morefs[asynclocalfs]' to use AsyncLocalFileSystem",
+    },
     "adl": {
         "class": "adlfs.AzureDatalakeFileSystem",
         "err": "Install adlfs to access Azure Datalake Gen1",
@@ -153,6 +146,10 @@ known_implementations = {
     "dask": {
         "class": "fsspec.implementations.dask.DaskWorkerFileSystem",
         "err": "Install dask distributed to access worker file system",
+    },
+    "dbfs": {
+        "class": "fsspec.implementations.dbfs.DatabricksFileSystem",
+        "err": "Install the requests package to use the DatabricksFileSystem",
     },
     "github": {
         "class": "fsspec.implementations.github.GithubFileSystem",
@@ -174,9 +171,44 @@ known_implementations = {
         "class": "fsspec.implementations.jupyter.JupyterFileSystem",
         "err": "Jupyter FS requires requests to be installed",
     },
+    "libarchive": {
+        "class": "fsspec.implementations.libarchive.LibArchiveFileSystem",
+        "err": "LibArchive requires to be installed",
+    },
+    "reference": {"class": "fsspec.implementations.reference.ReferenceFileSystem"},
+    "generic": {"class": "fsspec.generic.GenericFileSystem"},
+    "oss": {
+        "class": "ossfs.OSSFileSystem",
+        "err": "Install ossfs to access Alibaba Object Storage System",
+    },
+    "webdav": {
+        "class": "webdav4.fsspec.WebdavFileSystem",
+        "err": "Install webdav4 to access WebDAV",
+    },
+    "dvc": {
+        "class": "dvc.api.DVCFileSystem",
+        "err": "Install dvc to access DVCFileSystem",
+    },
+    "hf": {
+        "class": "huggingface_hub.HfFileSystem",
+        "err": "Install huggingface_hub to access HfFileSystem",
+    },
+    "root": {
+        "class": "fsspec_xrootd.XRootDFileSystem",
+        "err": "Install fsspec-xrootd to access xrootd storage system."
+        + " Note: 'root' is the protocol name for xrootd storage systems,"
+        + " not referring to root directories",
+    },
+    "dir": {"class": "fsspec.implementations.dirfs.DirFileSystem"},
+    "box": {
+        "class": "boxfs.BoxFileSystem",
+        "err": "Please install boxfs to access BoxFileSystem",
+    },
+    "lakefs": {
+        "class": "lakefs_spec.LakeFSFileSystem",
+        "err": "Please install lakefs-spec to access LakeFSFileSystem",
+    },
 }
-
-minversions = {"s3fs": LooseVersion("0.3.0"), "gcsfs": LooseVersion("0.3.0")}
 
 
 def get_filesystem_class(protocol):
@@ -209,20 +241,35 @@ def get_filesystem_class(protocol):
     return cls
 
 
-def _import_class(cls, minv=None):
-    mod, name = cls.rsplit(".", 1)
-    minv = minv or minversions
-    minversion = minv.get(mod, None)
+s3_msg = """Your installed version of s3fs is very old and known to cause
+severe performance issues, see also https://github.com/dask/dask/issues/10276
 
-    mod = importlib.import_module(mod)
-    if minversion:
-        version = getattr(mod, "__version__", None)
-        if version and LooseVersion(version) < minversion:
-            raise RuntimeError(
-                "'{}={}' is installed, but version '{}' or "
-                "higher is required".format(mod.__name__, version, minversion)
-            )
-    return getattr(mod, name)
+To fix, you should specify a lower version bound on s3fs, or
+update the current installation.
+"""
+
+
+def _import_class(cls, minv=None):
+    """Take a string FQP and return the imported class or identifier
+
+    clas is of the form "package.module.klass" or "package.module:subobject.klass"
+    """
+    if ":" in cls:
+        mod, name = cls.rsplit(":", 1)
+        s3 = mod == "s3fs"
+        mod = importlib.import_module(mod)
+        if s3 and mod.__version__.split(".") < ["0", "5"]:
+            warnings.warn(s3_msg)
+        for part in name.split("."):
+            mod = getattr(mod, part)
+        return mod
+    else:
+        mod, name = cls.rsplit(".", 1)
+        s3 = mod == "s3fs"
+        mod = importlib.import_module(mod)
+        if s3 and mod.__version__.split(".") < ["0", "5"]:
+            warnings.warn(s3_msg)
+        return getattr(mod, name)
 
 
 def filesystem(protocol, **storage_options):
@@ -231,5 +278,20 @@ def filesystem(protocol, **storage_options):
     ``storage_options`` are specific to the protocol being chosen, and are
     passed directly to the class.
     """
+    if protocol == "arrow_hdfs":
+        warnings.warn(
+            "The 'arrow_hdfs' protocol has been deprecated and will be "
+            "removed in the future. Specify it as 'hdfs'.",
+            DeprecationWarning,
+        )
+
     cls = get_filesystem_class(protocol)
     return cls(**storage_options)
+
+
+def available_protocols():
+    """Return a list of the implemented protocols.
+
+    Note that any given protocol may require extra packages to be importable.
+    """
+    return list(known_implementations)

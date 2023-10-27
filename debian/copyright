@@ -1,6 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: python-fsspec
-Source: https://github.com/intake/filesystem_spec
+Upstream-Contact: Martin Durant <mdurant@anaconda.com>
+Source: https://github.com/fsspec/filesystem_spec
 
 Files: *
 Copyright: Copyright (c) 2018, Martin Durant
@@ -31,7 +32,7 @@ License: BSD-3-Clause
  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Files: debian/*
-Copyright: 2019 Emmanuel Arias <eamanu@yaerobi.com>
+Copyright: 2019-2022 Emmanuel Arias <eamanu@debian.org>
            2019 Matthias Klose <doko@debian.org>
 License: GPL-2+
  This package is free software; you can redistribute it and/or modify

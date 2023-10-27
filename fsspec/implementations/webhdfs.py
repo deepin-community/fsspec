@@ -1,11 +1,18 @@
 # https://hadoop.apache.org/docs/r1.0.4/webhdfs.html
 
-import requests
-from urllib.parse import quote
-import uuid
-from ..spec import AbstractFileSystem, AbstractBufferedFile
-from ..utils import infer_storage_options
 import logging
+import os
+import secrets
+import shutil
+import tempfile
+import uuid
+from contextlib import suppress
+from urllib.parse import quote
+
+import requests
+
+from ..spec import AbstractBufferedFile, AbstractFileSystem
+from ..utils import infer_storage_options, tokenize
 
 logger = logging.getLogger("webhdfs")
 
@@ -17,12 +24,12 @@ class WebHDFS(AbstractFileSystem):
     Three auth mechanisms are supported:
 
     insecure: no auth is done, and the user is assumed to be whoever they
-        say they are (parameter `user`), or a predefined value such as
+        say they are (parameter ``user``), or a predefined value such as
         "dr.who" if not given
     spnego: when kerberos authentication is enabled, auth is negotiated by
         requests_kerberos https://github.com/requests/requests-kerberos .
         This establishes a session based on existing kinit login and/or
-        specified principal/password; paraneters are passed with ``kerb_kwargs``
+        specified principal/password; parameters are passed with ``kerb_kwargs``
     token: uses an existing Hadoop delegation token from another secured
         service. Indeed, this client can also generate such tokens when
         not insecure. Note that tokens expire, but can be renewed (by a
@@ -30,7 +37,7 @@ class WebHDFS(AbstractFileSystem):
 
     """
 
-    tempdir = "/tmp"
+    tempdir = str(tempfile.gettempdir())
     protocol = "webhdfs", "webHDFS"
 
     def __init__(
@@ -44,7 +51,7 @@ class WebHDFS(AbstractFileSystem):
         kerb_kwargs=None,
         data_proxy=None,
         use_https=False,
-        **kwargs
+        **kwargs,
     ):
         """
         Parameters
@@ -66,15 +73,15 @@ class WebHDFS(AbstractFileSystem):
             the user in who's name actions are taken
         kerb_kwargs: dict
             Any extra arguments for HTTPKerberosAuth, see
-            https://github.com/requests/requests-kerberos/blob/master/requests_kerberos/kerberos_.py
+            `<https://github.com/requests/requests-kerberos/blob/master/requests_kerberos/kerberos_.py>`_
         data_proxy: dict, callable or None
             If given, map data-node addresses. This can be necessary if the
             HDFS cluster is behind a proxy, running on Docker or otherwise has
             a mismatch between the host-names given by the name-node and the
             address by which to refer to them from the client. If a dict,
-            maps host names `host->data_proxy[host]`; if a callable, full
+            maps host names ``host->data_proxy[host]``; if a callable, full
             URLs are passed, and function must conform to
-            `url->data_proxy(url)`.
+            ``url->data_proxy(url)``.
         use_https: bool
             Whether to connect to the Name-node using HTTPS instead of HTTP
         kwargs
@@ -108,6 +115,12 @@ class WebHDFS(AbstractFileSystem):
             )
         self._connect()
 
+        self._fsid = "webhdfs_" + tokenize(host, port)
+
+    @property
+    def fsid(self):
+        return self._fsid
+
     def _connect(self):
         self.session = requests.Session()
         if self.kerb:
@@ -120,7 +133,7 @@ class WebHDFS(AbstractFileSystem):
         args = kwargs.copy()
         args.update(self.pars)
         args["op"] = op.upper()
-        logger.debug(url, method, args)
+        logger.debug("sending %s with %s", url, method)
         out = self.session.request(
             method=method.upper(),
             url=url,
@@ -155,7 +168,7 @@ class WebHDFS(AbstractFileSystem):
         autocommit=True,
         replication=None,
         permissions=None,
-        **kwargs
+        **kwargs,
     ):
         """
 
@@ -331,6 +344,23 @@ class WebHDFS(AbstractFileSystem):
             recursive="true" if recursive else "false",
         )
 
+    def rm_file(self, path, **kwargs):
+        self.rm(path)
+
+    def cp_file(self, lpath, rpath, **kwargs):
+        with self.open(lpath) as lstream:
+            tmp_fname = "/".join([self._parent(rpath), f".tmp.{secrets.token_hex(16)}"])
+            # Perform an atomic copy (stream to a temporary file and
+            # move it to the actual destination).
+            try:
+                with self.open(tmp_fname, "wb") as rstream:
+                    shutil.copyfileobj(lstream, rstream)
+                self.mv(tmp_fname, rpath)
+            except BaseException:  # noqa
+                with suppress(FileNotFoundError):
+                    self.rm(tmp_fname)
+                raise
+
     def _apply_proxy(self, location):
         if self.proxy and callable(self.proxy):
             location = self.proxy(location)
@@ -355,7 +385,7 @@ class WebHDFile(AbstractBufferedFile):
         tempdir = kwargs.pop("tempdir")
         if kwargs.pop("autocommit", False) is False:
             self.target = self.path
-            self.path = "/".join([tempdir, str(uuid.uuid4())])
+            self.path = os.path.join(tempdir, str(uuid.uuid4()))
 
     def _upload_chunk(self, final=False):
         """Write one part of a multi-block file upload
@@ -375,7 +405,7 @@ class WebHDFile(AbstractBufferedFile):
         return True
 
     def _initiate_upload(self):
-        """ Create remote file/upload """
+        """Create remote file/upload"""
         kwargs = self.kwargs.copy()
         if "a" in self.mode:
             op, method = "APPEND", "POST"
@@ -390,7 +420,9 @@ class WebHDFile(AbstractBufferedFile):
                 location, headers={"content-type": "application/octet-stream"}
             )
             out2.raise_for_status()
-        self.location = location.replace("CREATE", "APPEND")
+            # after creating empty file, change location to append to
+            out2 = self.fs._call("APPEND", "POST", self.path, redirect=False, **kwargs)
+            self.location = self.fs._apply_proxy(out2.headers["Location"])
 
     def _fetch_range(self, start, end):
         start = max(start, 0)

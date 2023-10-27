@@ -2,7 +2,8 @@ import pickle
 import string
 
 import pytest
-from fsspec.caching import BlockCache, caches
+
+from fsspec.caching import BlockCache, FirstChunkCache, caches, register_cache
 
 
 def test_cache_getitem(Cache_imp):
@@ -43,7 +44,10 @@ def letters_fetcher(start, end):
     return string.ascii_letters[start:end].encode()
 
 
-@pytest.fixture(params=caches.values(), ids=list(caches.keys()))
+not_parts_caches = {k: v for k, v in caches.items() if k != "parts"}
+
+
+@pytest.fixture(params=not_parts_caches.values(), ids=list(not_parts_caches))
 def Cache_imp(request):
     return request.param
 
@@ -67,6 +71,17 @@ def test_cache_pickleable(Cache_imp):
     assert unpickled._fetch(0, 10) == b"0" * 10
 
 
+def test_first_cache():
+    c = FirstChunkCache(5, letters_fetcher, 52)
+    assert c.cache is None
+    assert c._fetch(12, 15) == letters_fetcher(12, 15)
+    assert c.cache is None
+    assert c._fetch(3, 10) == letters_fetcher(3, 10)
+    assert c.cache == letters_fetcher(0, 5)
+    c.fetcher = None
+    assert c._fetch(1, 4) == letters_fetcher(1, 4)
+
+
 @pytest.mark.parametrize(
     "size_requests",
     [[(0, 30), (0, 35), (51, 52)], [(0, 1), (1, 11), (1, 52)], [(0, 52), (11, 15)]],
@@ -79,3 +94,54 @@ def test_cache_basic(Cache_imp, blocksize, size_requests):
         result = cache._fetch(start, end)
         expected = string.ascii_letters[start:end].encode()
         assert result == expected
+
+
+@pytest.mark.parametrize("strict", [True, False])
+@pytest.mark.parametrize("sort", [True, False])
+def test_known(sort, strict):
+    parts = {(10, 20): b"1" * 10, (20, 30): b"2" * 10, (0, 10): b"0" * 10}
+    if sort:
+        parts = dict(sorted(parts.items()))
+    c = caches["parts"](None, None, 100, parts, strict=strict)
+    assert (0, 30) in c.data  # got consolidated
+    assert c._fetch(5, 15) == b"0" * 5 + b"1" * 5
+    assert c._fetch(15, 25) == b"1" * 5 + b"2" * 5
+    if strict:
+        # Over-read will raise error
+        with pytest.raises(ValueError):
+            # tries to call None fetcher
+            c._fetch(25, 35)
+    else:
+        # Over-read will be zero-padded
+        assert c._fetch(25, 35) == b"2" * 5 + b"\x00" * 5
+
+
+def test_background(server, monkeypatch):
+    import threading
+    import time
+
+    import fsspec
+
+    head = {"head_ok": "true", "head_give_length": "true"}
+    urla = server + "/index/realfile"
+    h = fsspec.filesystem("http", headers=head)
+    thread_ids = {threading.current_thread().ident}
+    f = h.open(urla, block_size=5, cache_type="background")
+    orig = f.cache._fetch_block
+
+    def wrapped(*a, **kw):
+        thread_ids.add(threading.current_thread().ident)
+        return orig(*a, **kw)
+
+    f.cache._fetch_block = wrapped
+    assert len(thread_ids) == 1
+    f.read(1)
+    time.sleep(0.1)  # second block is loading
+    assert len(thread_ids) == 2
+
+
+def test_register_cache():
+    # just test that we have them populated and fail to re-add again unless overload
+    with pytest.raises(ValueError):
+        register_cache(BlockCache)
+    register_cache(BlockCache, clobber=True)

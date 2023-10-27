@@ -1,13 +1,15 @@
 import os
-import pytest
 import subprocess
 import sys
 import time
 
-from fsspec.implementations.ftp import FTPFileSystem
-from fsspec import open_files
-import fsspec
+import pytest
 
+import fsspec
+from fsspec import open_files
+from fsspec.implementations.ftp import FTPFileSystem
+
+ftplib = pytest.importorskip("ftplib")
 here = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -117,7 +119,7 @@ def test_transaction(ftp_writable):
     assert not fs.exists(fn)
 
 
-def test_transaction_with_cache(ftp_writable):
+def test_transaction_with_cache(ftp_writable, tmpdir):
     host, port, user, pw = ftp_writable
     fs = FTPFileSystem(host, port, user, pw)
     fs.mkdir("/tmp")
@@ -129,3 +131,48 @@ def test_transaction_with_cache(ftp_writable):
 
     assert "dir" not in fs.ls("/tmp", detail=False)
     assert not fs.exists("/tmp/dir")
+
+
+def test_cat_get(ftp_writable, tmpdir):
+    host, port, user, pw = ftp_writable
+    fs = FTPFileSystem(host, port, user, pw, block_size=500)
+    fs.mkdir("/tmp")
+    data = b"hello" * 500
+    fs.pipe("/tmp/myfile", data)
+    assert fs.cat_file("/tmp/myfile") == data
+
+    fn = os.path.join(tmpdir, "lfile")
+    fs.get_file("/tmp/myfile", fn)
+    assert open(fn, "rb").read() == data
+
+
+def test_mkdir(ftp_writable):
+    host, port, user, pw = ftp_writable
+    fs = FTPFileSystem(host, port, user, pw)
+    with pytest.raises(ftplib.error_perm):
+        fs.mkdir("/tmp/not/exist", create_parents=False)
+    fs.mkdir("/tmp/not/exist")
+    assert fs.exists("/tmp/not/exist")
+    fs.makedirs("/tmp/not/exist", exist_ok=True)
+    with pytest.raises(FileExistsError):
+        fs.makedirs("/tmp/not/exist", exist_ok=False)
+    fs.makedirs("/tmp/not/exist/inner/inner")
+    assert fs.isdir("/tmp/not/exist/inner/inner")
+
+
+def test_rm_get_recursive(ftp_writable, tmpdir):
+    tmpdir = str(tmpdir)
+    host, port, user, pw = ftp_writable
+    fs = FTPFileSystem(host, port, user, pw)
+    fs.mkdir("/tmp/topdir")
+    fs.mkdir("/tmp/topdir/underdir")
+    fs.touch("/tmp/topdir/afile")
+    fs.touch("/tmp/topdir/underdir/afile")
+
+    fs.get("/tmp/topdir", tmpdir, recursive=True)
+
+    with pytest.raises(ftplib.error_perm):
+        fs.rmdir("/tmp/topdir")
+
+    fs.rm("/tmp/topdir", recursive=True)
+    assert not fs.exists("/tmp/topdir")

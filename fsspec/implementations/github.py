@@ -1,7 +1,10 @@
 import requests
+
 from ..spec import AbstractFileSystem
 from ..utils import infer_storage_options
 from .memory import MemoryFile
+
+# TODO: add GIST backend, would be very similar
 
 
 class GithubFileSystem(AbstractFileSystem):
@@ -20,7 +23,7 @@ class GithubFileSystem(AbstractFileSystem):
       may specify sha in the extra args
     - 'github://org:repo@/precip/catalog.yml', where the org and repo are
       part of the URI
-    - 'github://org:repo@sha/precip/catalog.yml', where tha sha is also included
+    - 'github://org:repo@sha/precip/catalog.yml', where the sha is also included
 
     ``sha`` can be the full or abbreviated hex of the commit you want to fetch
     from, or a branch or tag name (so long as it doesn't contain special characters
@@ -34,15 +37,22 @@ class GithubFileSystem(AbstractFileSystem):
     rurl = "https://raw.githubusercontent.com/{org}/{repo}/{sha}/{path}"
     protocol = "github"
 
-    def __init__(self, org, repo, sha="master", username=None, token=None, **kwargs):
+    def __init__(self, org, repo, sha=None, username=None, token=None, **kwargs):
         super().__init__(**kwargs)
         self.org = org
         self.repo = repo
-        self.root = sha
         if (username is None) ^ (token is None):
             raise ValueError("Auth required both username and token")
         self.username = username
         self.token = token
+        if sha is None:
+            # look up default branch (not necessarily "master")
+            u = "https://api.github.com/repos/{org}/{repo}"
+            r = requests.get(u.format(org=org, repo=repo), **self.kw)
+            r.raise_for_status()
+            sha = r.json()["default_branch"]
+
+        self.root = sha
         self.ls("")
 
     @property
@@ -60,7 +70,7 @@ class GithubFileSystem(AbstractFileSystem):
         Parameters
         ----------
         org_or_user: str
-            Nmae of the github org or user to query
+            Name of the github org or user to query
         is_org: bool (default True)
             Whether the name is an organisation (True) or user (False)
 
@@ -82,7 +92,7 @@ class GithubFileSystem(AbstractFileSystem):
         r = requests.get(
             "https://api.github.com/repos/{org}/{repo}/tags"
             "".format(org=self.org, repo=self.repo),
-            **self.kw
+            **self.kw,
         )
         r.raise_for_status()
         return [t["name"] for t in r.json()]
@@ -93,7 +103,7 @@ class GithubFileSystem(AbstractFileSystem):
         r = requests.get(
             "https://api.github.com/repos/{org}/{repo}/branches"
             "".format(org=self.org, repo=self.repo),
-            **self.kw
+            **self.kw,
         )
         r.raise_for_status()
         return [t["name"] for t in r.json()]
@@ -146,15 +156,17 @@ class GithubFileSystem(AbstractFileSystem):
             if r.status_code == 404:
                 raise FileNotFoundError(path)
             r.raise_for_status()
+            types = {"blob": "file", "tree": "directory"}
             out = [
                 {
                     "name": path + "/" + f["path"] if path else f["path"],
                     "mode": f["mode"],
-                    "type": {"blob": "file", "tree": "directory"}[f["type"]],
+                    "type": types[f["type"]],
                     "size": f.get("size", 0),
                     "sha": f["sha"],
                 }
                 for f in r.json()["tree"]
+                if f["type"] in types
             ]
             if sha in [self.root, None]:
                 self.dircache[path] = out
@@ -193,7 +205,7 @@ class GithubFileSystem(AbstractFileSystem):
         autocommit=True,
         cache_options=None,
         sha=None,
-        **kwargs
+        **kwargs,
     ):
         if mode != "rb":
             raise NotImplementedError

@@ -1,0 +1,12 @@
+Tests: fsspec-tests
+Depends: python3-aiohttp,
+         python3-all,
+         python3-numpy,
+         python3-pytest,
+         python3-pytest-asyncio,
+         python3-pytest-mock,
+         python3-pytest-vcr,
+         python3-requests,
+         python3-tqdm,
+         @,
+Restrictions: allow-stderr, isolation-container, needs-root

@@ -48,6 +48,14 @@ def test_infer_custom_compression():
         del compressions["tst"]
 
 
+def test_infer_uppercase_compression():
+    assert infer_compression("fn.ZIP") == "zip"
+    assert infer_compression("fn.GZ") == "gzip"
+    assert infer_compression("fn.UNKNOWN") is None
+    assert infer_compression("fn.TEST_UPPERCASE") is None
+    assert infer_compression("fn.TEST") is None
+
+
 def test_lzma_compression_name():
     pytest.importorskip("lzma")
     assert infer_compression("fn.xz") == "xz"
@@ -109,6 +117,13 @@ def test_zstd_compression(tmpdir):
         str(tmp_path / "out.zst"), mode="rt", compression="zstd"
     ) as infile:
         assert infile.read() == tdat
+
+    # fails in https://github.com/fsspec/filesystem_spec/issues/725
+    infile = fsspec.core.open(
+        str(tmp_path / "out.zst"), mode="rb", compression="infer"
+    ).open()
+
+    infile.close()
 
 
 def test_snappy_compression(tmpdir):

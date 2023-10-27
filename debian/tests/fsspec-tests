@@ -1,0 +1,18 @@
+#!/bin/sh
+set -efu
+
+pys="$(py3versions -s 2> /dev/null)"
+
+# copy test files into an empty dir
+cp -va fsspec/tests "$AUTOPKGTEST_TMP"/tests
+cp -va fsspec/implementations/tests "$AUTOPKGTEST_TMP"/implementations_tests
+# then symlink them so they appear where upstream code expects them
+ln -vs "$AUTOPKGTEST_TMP"/tests /usr/lib/python3/dist-packages/fsspec/tests
+ln -vs "$AUTOPKGTEST_TMP"/implementations_tests /usr/lib/python3/dist-packages/fsspec/implementations/tests
+
+for py in $pys; do
+	echo "=== $py ==="
+	$py -m pytest --pyargs fsspec.tests
+	$py -m pytest --pyargs fsspec.implementations.tests
+done
+
