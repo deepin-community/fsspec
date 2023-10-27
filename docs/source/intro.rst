@@ -93,3 +93,7 @@ to derive from, ``AbstractFileSystem``.
 
 .. _zarr: https://zarr.readthedocs.io
 
+.. raw:: html
+
+    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>

@@ -120,3 +120,7 @@ commit hooks if you intend to make PRs, as linting is done as part of the CI.
 Docs use sphinx and the numpy docstring style. Please add an entry to the changelog
 along with any PR.
 
+.. raw:: html
+
+    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>

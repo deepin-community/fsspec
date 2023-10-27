@@ -822,3 +822,7 @@ Version 0.6.0
 * Added a ``detail=True`` parameter to :meth:`fsspec.spec.AbstractFileSystem.ls` (:pr:`168`)
 * Fixed handling of UNC/DFS paths (:issue:`154`)
 
+.. raw:: html
+
+    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>

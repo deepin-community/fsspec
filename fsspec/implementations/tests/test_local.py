@@ -486,8 +486,8 @@ def test_make_path_posix():
         )
     assert "/" in make_path_posix("rel\\path")
 
-    # pp = make_path_posix("./path")
-    # assert "./" not in pp and ".\\" not in pp
+    pp = make_path_posix("./path")
+    assert "./" not in pp and ".\\" not in pp
 
 
 def test_linked_files(tmpdir):
