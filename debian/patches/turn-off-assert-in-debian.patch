@@ -1,0 +1,20 @@
+Description: Turn off an assert in Debian
+ The test test_make_path_posix check that the current path does not
+ contains a ".". This is no valid in Debian because ".pybuild" always
+ contains a dot. This patch remove the assert to avoid a test fail.
+Author: Emmanuel Arias <eamanu@yaerobi.com>
+Index: python-fsspec/fsspec/implementations/tests/test_local.py
+===================================================================
+--- python-fsspec.orig/fsspec/implementations/tests/test_local.py	2023-06-24 18:02:16.271556606 -0300
++++ python-fsspec/fsspec/implementations/tests/test_local.py	2023-06-24 18:13:39.757022988 -0300
+@@ -486,8 +486,8 @@
+         )
+     assert "/" in make_path_posix("rel\\path")
+ 
+-    pp = make_path_posix("./path")
+-    assert "./" not in pp and ".\\" not in pp
++    # pp = make_path_posix("./path")
++    # assert "./" not in pp and ".\\" not in pp
+ 
+ 
+ def test_linked_files(tmpdir):

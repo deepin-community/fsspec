@@ -1,11 +1,5 @@
-Introduction
-============
-
-To get stuck into using the package, rather than reading about its philosophy and history, you can
-skip to :doc:`usage`.
-
 Background
-----------
+==========
 
 Python provides a standard interface for open files, so that alternate implementations of file-like object can
 work seamlessly with many function which rely only on the methods of that standard interface. A number of libraries
@@ -21,7 +15,7 @@ other file-system implementations simpler.
 History
 -------
 
-I (Martin Durant) have been involved in building a number of remote-data file-system implementations, principally
+We have been involved in building a number of remote-data file-system implementations, principally
 in the context of the `Dask`_ project. In particular, several are listed
 in `docs`_ with links to the specific repositories.
 With common authorship, there is much that is similar between the implementations, for example posix-like naming
@@ -31,15 +25,15 @@ of each implementation with the generic usage that Dask demanded. People may fin
 `code`_ which parses URLs and creates file-system
 instances interesting.
 
-.. _Dask: http://dask.pydata.org/en/latest/
-.. _docs: http://dask.pydata.org/en/latest/remote-data-services.html
-.. _code: https://github.com/dask/dask/blob/master/dask/bytes/core.py#L266
+.. _Dask: https://dask.pydata.org/en/latest/
+.. _docs: https://dask.pydata.org/en/latest/how-to/connect-to-remote-data.html
+.. _code: https://github.com/fsspec/filesystem_spec/blob/4f0eb48/fsspec/core.py#L525
 
 At the same time, the Apache `Arrow`_ project was also concerned with a similar problem,
 particularly a common interface to local and HDFS files, for example the
 `hdfs`_ interface (which actually communicated with HDFS
 with a choice of driver). These are mostly used internally within Arrow, but Dask was modified in order to be able
-to use the alternate HDFS interface (which solves some security issues with `hdfs3`). In the process, a
+to use the alternate HDFS interface (which solves some security issues with ``hdfs3``). In the process, a
 `conversation`_
 was started, and I invite all interested parties to continue the conversation in this location.
 
@@ -57,31 +51,37 @@ Influences
 The following places to consider, when choosing the definitions of how we would like the file-system specification
 to look:
 
-- python's `os`_ module and its `path` namespace; also other file-connected
-  functionality in the standard library
-- posix/bash method naming conventions that linux/unix/osx users are familiar with; or perhaps their Windows variants
-- the existing implementations for the various backends (e.g.,
-  `gcsfs`_ or Arrow's
-  `hdfs`_)
-- `pyfilesystems`_, an attempt to do something similar, with a
-  plugin architecture. This conception has several types of local file-system, and a lot of well-thought-out
-  validation code.
+#. python's `os`_ module and its `path`_ namespace; also other file-connected
+   functionality in the standard library
+#. posix/bash method naming conventions that linux/unix/osx users are familiar with; or perhaps their Windows variants
+#. the existing implementations for the various backends (e.g.,
+   `gcsfs`_ or Arrow's
+   `hdfs`_)
+#. `pyfilesystems`_, an attempt to do something similar, with a
+   plugin architecture. This conception has several types of local file-system, and a lot of well-thought-out
+   validation code.
 
 .. _os: https://docs.python.org/3/library/os.html
-.. _gcsfs: http://gcsfs.readthedocs.io/en/latest/api.html#gcsfs.core.GCSFileSystem
+.. _path: https://docs.python.org/3/library/os.path.html
+.. _gcsfs: https://gcsfs.readthedocs.io/en/latest/api.html#gcsfs.core.GCSFileSystem
 .. _pyfilesystems: https://docs.pyfilesystem.org/en/latest/index.html
 
-Not pyfilesystems?
+Other similar work
 ------------------
 
 It might have been conceivable to reuse code in ``pyfilesystems``, which has an established interface and several
-implementations of its own. However, it supports none of the :ref:`highlight`, critical to
+implementations of its own. However, it supports none of the **critical** features for
 cloud and parallel access, and would not be easy to
 coerce. Following on the success of ``s3fs`` and ``gcsfs``, and their use within Dask, it seemed best to
 have an interface as close to those as possible. See a
 `discussion`_ on the topic.
 
-.. _discussion: https://github.com/intake/filesystem_spec/issues/5
+.. _discussion: https://github.com/fsspec/filesystem_spec/issues/5
+
+Other newer technologies such as `smart_open`_ and ``pyarrow``'s newer file-system rewrite also have some
+parts of the functionality presented here, that might suit some use cases better.
+
+.. _smart_open: https://github.com/RaRe-Technologies/smart_open
 
 Structure of the package
 ------------------------
@@ -92,3 +92,8 @@ develop new file-system implementations. ``fsspec/spec.py`` contains the main ab
 to derive from, ``AbstractFileSystem``.
 
 .. _zarr: https://zarr.readthedocs.io
+
+.. raw:: html
+
+    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>

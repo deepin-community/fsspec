@@ -1,16 +1,13 @@
 """Tests abstract buffered file API, using FTP implementation"""
 import pickle
-import sys
+
 import pytest
+
 from fsspec.implementations.tests.test_ftp import FTPFileSystem
 
 data = b"hello" * 10000
 
 
-@pytest.mark.xfail(
-    sys.version_info < (3, 6),
-    reason="py35 error, see https://github.com/intake/filesystem_spec/issues/147",
-)
 def test_pickle(ftp_writable):
     host, port, user, pw = ftp_writable
     ftp = FTPFileSystem(host=host, port=port, username=user, password=pw)
@@ -164,7 +161,7 @@ def test_read_block(ftp_writable):
 def test_with_gzip(ftp_writable):
     import gzip
 
-    data = b"some compressable stuff"
+    data = b"some compressible stuff"
     host, port, user, pw = ftp_writable
     fs = FTPFileSystem(host=host, port=port, username=user, password=pw)
     fn = "/myfile"
@@ -175,6 +172,14 @@ def test_with_gzip(ftp_writable):
     with fs.open(fn, "rb") as f:
         gf = gzip.GzipFile(fileobj=f, mode="r")
         assert gf.read() == data
+
+
+def test_auto_compression(m):
+    fs = m
+    with fs.open("myfile.gz", mode="wt", compression="infer") as f:
+        f.write("text")
+    with fs.open("myfile.gz", mode="rt", compression="infer") as f:
+        assert f.read() == "text"
 
 
 def test_with_zip(ftp_writable):

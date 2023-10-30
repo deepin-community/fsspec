@@ -3,13 +3,13 @@
 import contextlib
 import os
 import pickle
-import sys
 import tempfile
+from unittest.mock import Mock
 
 import pytest
 
 import fsspec
-from fsspec.implementations.memory import MemoryFileSystem, MemoryFile
+from fsspec.implementations.memory import MemoryFile, MemoryFileSystem
 
 
 def test_idempotent():
@@ -33,15 +33,20 @@ def test_pickle():
 
 
 def test_class_methods():
-    assert MemoryFileSystem._strip_protocol("memory::stuff") == "stuff"
-    assert MemoryFileSystem._strip_protocol("memory://stuff") == "stuff"
-    assert MemoryFileSystem._strip_protocol("stuff") == "stuff"
+    assert MemoryFileSystem._strip_protocol("memory://stuff") == "/stuff"
+    assert MemoryFileSystem._strip_protocol("stuff") == "/stuff"
     assert MemoryFileSystem._strip_protocol("other://stuff") == "other://stuff"
 
     assert MemoryFileSystem._get_kwargs_from_urls("memory://user@thing") == {}
 
 
-def test_get_put(tmpdir):
+def test_multi(m):
+    m.pipe("/afile", b"data")
+    fs, token, paths = fsspec.core.get_fs_token_paths(["/afile", "/afile"])
+    assert len(paths) == 2
+
+
+def test_get_put(tmpdir, m):
     tmpdir = str(tmpdir)
     fn = os.path.join(tmpdir, "one")
     open(fn, "wb").write(b"one")
@@ -95,19 +100,43 @@ def test_get_put(tmpdir):
     assert open(fn, "rb").read() == b"one"
 
 
-def test_du():
+def test_du(m):
     fs = MemoryFileSystem()
-    fs.store = {
-        "/dir/afile": MemoryFile(fs, "/afile", b"a"),
-        "/dir/dirb/afile": MemoryFile(fs, "/afile", b"bb"),
-        "/dir/dirb/bfile": MemoryFile(fs, "/afile", b"ccc"),
-    }
+    fs.store.update(
+        {
+            "/dir/afile": MemoryFile(fs, "/afile", b"a"),
+            "/dir/dirb/afile": MemoryFile(fs, "/afile", b"bb"),
+            "/dir/dirb/bfile": MemoryFile(fs, "/afile", b"ccc"),
+        }
+    )
     assert fs.du("/dir") == 6
-    assert fs.du("/dir", total=False)["/dir/dirb/afile"] == 2
-    assert fs.du("/dir", maxdepth=0) == 1
+    assert fs.du("/dir", total=False) == {
+        "/dir/afile": 1,
+        "/dir/dirb/afile": 2,
+        "/dir/dirb/bfile": 3,
+    }
+    assert fs.du("/dir", withdirs=True) == 6
+    assert fs.du("/dir", total=False, withdirs=True) == {
+        "/dir": 0,
+        "/dir/afile": 1,
+        "/dir/dirb": 0,
+        "/dir/dirb/afile": 2,
+        "/dir/dirb/bfile": 3,
+    }
+    with pytest.raises(ValueError):
+        assert fs.du("/dir", maxdepth=0) == 1
+    assert fs.du("/dir", total=False, withdirs=True, maxdepth=1) == {
+        "/dir": 0,
+        "/dir/afile": 1,
+        "/dir/dirb": 0,
+    }
+
+    # Size of file only.
+    assert fs.du("/dir/afile") == 1
+    assert fs.du("/dir/afile", withdirs=True) == 1
 
 
-def test_head_tail():
+def test_head_tail(m):
     fs = MemoryFileSystem()
     with fs.open("/myfile", "wb") as f:
         f.write(b"I had a nice big cabbage")
@@ -115,7 +144,7 @@ def test_head_tail():
     assert fs.tail("/myfile", 7) == b"cabbage"
 
 
-def test_move():
+def test_move(m):
     fs = MemoryFileSystem()
     with fs.open("/myfile", "wb") as f:
         f.write(b"I had a nice big cabbage")
@@ -125,7 +154,7 @@ def test_move():
     assert isinstance(fs.ukey("/otherfile"), str)
 
 
-def test_recursive_get_put(tmpdir):
+def test_recursive_get_put(tmpdir, m):
     fs = MemoryFileSystem()
     os.makedirs(f"{tmpdir}/nest")
     for file in ["one", "two", "nest/other"]:
@@ -134,24 +163,32 @@ def test_recursive_get_put(tmpdir):
 
     fs.put(str(tmpdir), "test", recursive=True)
 
+    # get to directory with slash
     d = tempfile.mkdtemp()
-    fs.get("test", d, recursive=True)
+    fs.get("test/", d, recursive=True)
     for file in ["one", "two", "nest/other"]:
         with open(f"{d}/{file}", "rb") as f:
             f.read() == b"data"
 
+    # get to directory without slash
+    d = tempfile.mkdtemp()
+    fs.get("test", d, recursive=True)
+    for file in ["test/one", "test/two", "test/nest/other"]:
+        with open(f"{d}/{file}", "rb") as f:
+            f.read() == b"data"
 
-def test_pipe_cat():
+
+def test_pipe_cat(m):
     fs = MemoryFileSystem()
     fs.pipe("afile", b"contents")
     assert fs.cat("afile") == b"contents"
 
-    data = {"bfile": b"more", "cfile": b"stuff"}
+    data = {"/bfile": b"more", "/cfile": b"stuff"}
     fs.pipe(data)
     assert fs.cat(list(data)) == data
 
 
-def test_read_block_delimiter():
+def test_read_block_delimiter(m):
     fs = MemoryFileSystem()
     with fs.open("/myfile", "wb") as f:
         f.write(b"some\n" b"lines\n" b"of\n" b"text")
@@ -163,12 +200,23 @@ def test_read_block_delimiter():
     assert fs.read_block("/myfile", 0, None) == fs.cat("/myfile")
 
 
-def test_open_text():
+def test_open_text(m):
     fs = MemoryFileSystem()
     with fs.open("/myfile", "wb") as f:
         f.write(b"some\n" b"lines\n" b"of\n" b"text")
     f = fs.open("/myfile", "r", encoding="latin1")
     assert f.encoding == "latin1"
+
+
+def test_read_text(m):
+    with m.open("/myfile", "w", encoding="utf-8") as f:
+        f.write("some\nlines\nof\ntext")
+    assert m.read_text("/myfile", encoding="utf-8") == "some\nlines\nof\ntext"
+
+
+def test_write_text(m):
+    m.write_text("/myfile", "some\nlines\nof\ntext", encoding="utf-8")
+    assert m.read_text("/myfile", encoding="utf-8") == "some\nlines\nof\ntext"
 
 
 def test_chained_fs():
@@ -190,7 +238,7 @@ def test_chained_fs():
 
 @pytest.mark.xfail(reason="see issue #334", strict=True)
 def test_multilevel_chained_fs():
-    """This test reproduces intake/filesystem_spec#334"""
+    """This test reproduces fsspec/filesystem_spec#334"""
     import zipfile
 
     d1 = tempfile.mkdtemp()
@@ -214,9 +262,8 @@ def test_multilevel_chained_fs():
             assert f.read().decode("utf-8") == f.name
 
 
-@pytest.mark.skipif(sys.version_info < (3, 7), reason="no seek in old zipfile")
 def test_multilevel_chained_fs_zip_zip_file():
-    """This test reproduces intake/filesystem_spec#334"""
+    """This test reproduces fsspec/filesystem_spec#334"""
     import zipfile
 
     d1 = tempfile.mkdtemp()
@@ -262,6 +309,7 @@ def test_chained_equivalent():
     #  since the parameters don't quite match. Also, the url understood by the two
     #  of s are not the same (path gets munged a bit differently)
     assert of.fs == of2.fs
+    assert hash(of.fs) == hash(of2.fs)
     assert of.open().read() == of2.open().read()
 
 
@@ -324,3 +372,127 @@ def test_chained_fo():
     with of[0] as f:
         assert f.read() == b"test"
     assert "afile" in os.listdir(d3)
+
+
+def test_url_to_fs():
+    url = "memory://a.txt"
+    fs, url2 = fsspec.core.url_to_fs(url)
+
+    assert isinstance(fs, MemoryFileSystem)
+    assert url2 == "/a.txt"
+
+
+def test_walk(m):
+    # depth = 0
+    dir1 = "/dir1"
+    # depth = 1 (2 dirs, 1 file)
+    dir11 = dir1 + "/dir11"
+    dir12 = dir1 + "/dir12"
+    file11 = dir1 + "/file11"
+    # depth = 2
+    dir111 = dir11 + "/dir111"
+    file111 = dir11 + "/file111"
+    file121 = dir12 + "/file121"
+    # depth = 3
+    file1111 = dir111 + "/file1111"
+
+    m.mkdir(dir111)  # Creates parents too
+    m.mkdir(dir12)  # Creates parents too
+    m.touch(file11)
+    m.touch(file111)
+    m.touch(file121)
+    m.touch(file1111)
+
+    # No maxdepth
+    assert list(m.walk(dir1, topdown=True)) == [
+        (dir1, ["dir11", "dir12"], ["file11"]),
+        (dir11, ["dir111"], ["file111"]),
+        (dir111, [], ["file1111"]),
+        (dir12, [], ["file121"]),
+    ]
+    assert list(m.walk(dir1, topdown=False)) == [
+        (dir111, [], ["file1111"]),
+        (dir11, ["dir111"], ["file111"]),
+        (dir12, [], ["file121"]),
+        (dir1, ["dir11", "dir12"], ["file11"]),
+    ]
+
+    # maxdepth=2
+    assert list(m.walk(dir1, maxdepth=2, topdown=True)) == [
+        (dir1, ["dir11", "dir12"], ["file11"]),
+        (dir11, ["dir111"], ["file111"]),
+        (dir12, [], ["file121"]),
+    ]
+    assert list(m.walk(dir1, maxdepth=2, topdown=False)) == [
+        (dir11, ["dir111"], ["file111"]),
+        (dir12, [], ["file121"]),
+        (dir1, ["dir11", "dir12"], ["file11"]),
+    ]
+
+    # maxdepth=1
+    assert list(m.walk(dir1, maxdepth=1, topdown=True)) == [
+        (dir1, ["dir11", "dir12"], ["file11"]),
+    ]
+    assert list(m.walk(dir1, maxdepth=1, topdown=False)) == [
+        (dir1, ["dir11", "dir12"], ["file11"]),
+    ]
+
+    # maxdepth=0
+    with pytest.raises(ValueError):
+        list(m.walk(dir1, maxdepth=0, topdown=True))
+    with pytest.raises(ValueError):
+        list(m.walk(dir1, maxdepth=0, topdown=False))
+
+    # prune dir111
+    def _walk(*args, **kwargs):
+        for path, dirs, files in m.walk(*args, **kwargs):
+            yield (path, dirs.copy(), files)
+            if "dir111" in dirs:
+                dirs.remove("dir111")
+
+    assert list(_walk(dir1, topdown=True)) == [
+        (dir1, ["dir11", "dir12"], ["file11"]),
+        (dir11, ["dir111"], ["file111"]),
+        (dir12, [], ["file121"]),
+    ]
+    assert list(_walk(dir1, topdown=False)) == [
+        (dir111, [], ["file1111"]),
+        (dir11, ["dir111"], ["file111"]),
+        (dir12, [], ["file121"]),
+        (dir1, ["dir11", "dir12"], ["file11"]),
+    ]
+
+    # reverse dirs order
+    def _walk(*args, **kwargs):
+        for path, dirs, files in m.walk(*args, **kwargs):
+            yield (path, dirs.copy(), files)
+            dirs.reverse()
+
+    assert list(_walk(dir1, topdown=True)) == [
+        (dir1, ["dir11", "dir12"], ["file11"]),
+        # Here dir12 comes before dir11
+        (dir12, [], ["file121"]),
+        (dir11, ["dir111"], ["file111"]),
+        (dir111, [], ["file1111"]),
+    ]
+    assert list(_walk(dir1, topdown=False)) == [
+        (dir111, [], ["file1111"]),
+        (dir11, ["dir111"], ["file111"]),
+        (dir12, [], ["file121"]),
+        (dir1, ["dir11", "dir12"], ["file11"]),
+    ]
+
+    # on_error omit by default
+    assert list(m.walk("do_not_exist")) == []
+    # on_error omit
+    assert list(m.walk("do_not_exist", on_error="omit")) == []
+    # on_error raise
+    with pytest.raises(FileNotFoundError):
+        list(m.walk("do_not_exist", on_error="raise"))
+    # on_error callable function
+    mock = Mock()
+    assert list(m.walk("do_not_exist", on_error=mock.onerror)) == []
+    mock.onerror.assert_called()
+    assert mock.onerror.call_args.kwargs == {}
+    assert len(mock.onerror.call_args.args) == 1
+    assert isinstance(mock.onerror.call_args.args[0], FileNotFoundError)

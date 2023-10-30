@@ -1,18 +1,6 @@
 Features of fsspec
 ==================
 
-Consistent API to many different storage backends. The general API and functionality were
-proven with the projects `s3fs`_ and `gcsfs`_ (along with `hdfs3`_ and `adlfs`_), within the
-context of Dask and independently. These have been tried and tested by many users and shown their
-usefulness over some years. ``fsspec`` aims to build on these and unify their models, as well
-as extract out file-system handling code from Dask which does not so comfortably fit within a
-library designed for task-graph creation and their scheduling.
-
-.. _s3fs: https://s3fs.readthedocs.io/en/latest/
-.. _gcsfs: https://gcsfs.readthedocs.io/en/latest/
-.. _hdfs3: https://hdfs3.readthedocs.io/en/latest/
-.. _adlfs: https://docs.microsoft.com/en-us/azure/data-lake-store/
-
 Here follows a brief description of some features of note of ``fsspec`` that provides to make
 it an interesting project beyond some other file-system abstractions.
 
@@ -50,27 +38,40 @@ the initiation of the context which actually does the work of creating file-like
         # f is now a real file-like object holding resources
         f.read(...)
 
-Random Access and Buffering
----------------------------
+File Buffering and random access
+--------------------------------
 
-The :func:`fsspec.spec.AbstractBufferedFile` class is provided as an easy way to build file-like
-interfaces to some service which is capable of providing blocks of bytes. This class is derived
-from in a number of the existing implementations. A subclass of ``AbstractBufferedFile`` provides
-random access for the underlying file-like data (without downloading the whole thing) and
-configurable read-ahead buffers to minimise the number of the read operations that need to be
-performed on the back-end storage.
-
-This is also a critical feature in the big-data access model, where each sub-task of an operation
+Most implementations create file objects which derive from ``fsspec.spec.AbstractBufferedFile``, and
+have many behaviours in common. A subclass of ``AbstractBufferedFile`` provides
+random access for the underlying file-like data (without downloading the whole thing).
+This is a critical feature in the big-data access model, where each sub-task of an operation
 may need on a small part of a file, and does not, therefore want to be forced into downloading the
 whole thing.
+
+These files offer buffering of both read and write operations, so that
+communication with the remote resource is limited. The size of the buffer is generally configured
+with the ``blocksize=`` kwarg at open time, although the implementation may have some minimum or
+maximum sizes that need to be respected.
+
+For reading, a number of buffering schemes are available, listed in ``fsspec.caching.caches``
+(see :ref:`readbuffering`), or "none" for no buffering at all, e.g., for a simple read-ahead
+buffer, you can do
+
+.. code-block:: python
+
+   fs = fsspec.filesystem(...)
+   with fs.open(path, mode='rb', cache_type='readahead') as f:
+       use_for_something(f)
 
 Transparent text-mode and compression
 -------------------------------------
 
 As mentioned above, the ``OpenFile`` class allows for the opening of files on a binary store,
 which appear to be in text mode and/or allow for a compression/decompression layer between the
-caller and the back-end storage system. From the user's point of view, this is achieved simply
-by passing arguments to the :func:`fsspec.open_files` or :func:`fsspec.open` functions, and
+caller and the back-end storage system. The list of ``fsspec`` supported codec
+can be retrieved using :func:`fsspec.available_compressions`.
+From the user's point of view, this is achieved simply by passing arguments to
+the :func:`fsspec.open_files` or :func:`fsspec.open` functions, and
 thereafter happens transparently.
 
 Key-value stores
@@ -94,13 +95,20 @@ object.
 PyArrow integration
 -------------------
 
-`pyarrow`_ has its own internal idea of what a file-system is (``pyarrow.filesystem.FileSystem``),
+`pyarrow`_ has its own internal idea of what a file-system is (``pyarrow.fs.FileSystem``),
 and some functions, particularly the loading of parquet, require that the target be compatible.
-As it happens, the design of the file-system interface in ``pyarrow`` *is* compatible with `fsspec`
-(this is not by accident). Therefore at import time, ``fsspec`` checks for the existence of
-``pyarrow``, and, if found, adds it to the superclasses of the spec base-class. In this manner,
-all ``fsspec``-derived file-systems are also pyarrow file-systems, and can be used by pyarrow
-functions.
+As it happens, the design of the file-system interface in ``pyarrow`` *is* compatible with ``fsspec``
+(this is not by accident).
+
+At import time, ``fsspec`` checks for the existence of ``pyarrow``, and, if ``pyarrow < 2.0`` is
+found, adds its base filesystem to the superclasses of the spec base-class.
+For ``pyarrow >= 2.0``, ``fsspec`` file systems can simply be passed to ``pyarrow`` functions
+that expect ``pyarrow`` filesystems, and ``pyarrow`` `will automatically wrap them
+<https://arrow.apache.org/docs/python/filesystems.html#using-fsspec-compatible-filesystems>`_.
+
+In this manner, all ``fsspec``-derived file-systems are also ``pyarrow`` file-systems, and can be used
+by ``pyarrow`` functions.
+
 
 .. _pyarrow: https://arrow.apache.org/docs/python/
 
@@ -118,7 +126,7 @@ can be used like
 .. code-block:: python
 
     fs = fsspec.filesystem(...)
-    with fs.transation:
+    with fs.transaction:
         with fs.open('file1', 'wb') as f:
             f.write(b'some data')
         with fs.open('file2', 'wb') as f:
@@ -137,7 +145,7 @@ is a harder problem to solve, and the implementation described here is only part
 Mount anything with FUSE
 ------------------------
 
-Any path of any file-system can be mapped to a local directory using pyfuse and
+Any path of any file-system can be mapped to a local directory using `fusepy <https://pypi.org/project/fusepy/>`_ and
 :func:`fsspec.fuse.run`. This feature is experimental, but basic file listing with
 details, and read/write should generally be available to the extent that the
 remote file-system provides enough information. Naturally, if a file-system is read-only,
@@ -162,8 +170,8 @@ is currently a simple dict, but could in the future be LRU, or something more co
 to fine-tune instance lifetimes.
 
 Since files can hold on to write caches and read buffers,
-the instance cache may cause excessive memory usage in some situations; but normally, files
-will get ``close``d, and the data discarded. Only when there is also an unfinalised transaction or
+the instance cache may cause excessive memory usage in some situations; but normally, files'
+``close`` methods will be called, discarding the data. Only when there is also an unfinalised transaction or
 captured traceback might this be anticipated becoming a problem.
 
 To disable instance caching, i.e., get a fresh instance which is not in the cache
@@ -187,25 +195,6 @@ When the ``fsspec`` instance writes to the backend, the method ``invalidate_cach
 is called, so that subsequent listing of the given paths will force a refresh. In
 addition, some methods like ``ls`` have a ``refresh`` parameter to force fetching
 the listing again.
-
-File Buffering
---------------
-
-Most implementations create file objects which derive from ``fsspec.spec.AbstractBufferedFile``, and
-have many behaviours in common. These files offer buffering of both read and write operations, so that
-communication with the remote resource is limited. The size of the buffer is generally configured
-with the ``blocksize=`` kwargs at open time, although the implementation may have some minimum or
-maximum sizes that need to be respected.
-
-For reading, a number of buffering schemes are available, listed in ``fsspec.caching.caches``
-(see :ref:`readbuffering`), or "none" for no buffering at all, e.g., for a simple read-ahead
-buffer, you can do
-
-.. code-block:: python
-
-   fs = fsspec.filesystem(...)
-   with fs.open(path, mode='rb', cache_type='readahead') as f:
-       use_for_something(f)
 
 URL chaining
 ------------
@@ -263,7 +252,7 @@ option exists to copy files locally when you first access them, and thereafter t
 This local cache of data might be temporary (i.e., attached to the process and discarded when the
 process ends) or at some specific location in your local storage.
 
-Two mechanisms are provided, and both involve wrapping a `target` filesystem. The following example
+Two mechanisms are provided, and both involve wrapping a ``target`` filesystem. The following example
 creates a file-based cache.
 
 .. code-block:: python
@@ -284,7 +273,7 @@ be the equivalent
 .. code-block:: python
 
     of = fsspec.open("filecache::s3://bucket/key",
-                     s3={'anon': True}, filecache={'cache_storage'='/tmp/files'})
+                     s3={'anon': True}, filecache={'cache_storage':'/tmp/files'})
 
 With the "blockcache" variant, data is downloaded block-wise: only the specific parts of the remote file
 which are accessed. This means that the local copy of the file might end up being much smaller than the
@@ -316,8 +305,8 @@ to the target URL, in this case on S3. The file-like object ``f`` can be passed 
 library expecting to write to a file. Note that we pass parameters to ``S3FileSystem`` using
 the key ``"s3"``, the same as the name of the protocol.
 
-File Selector
--------------
+File Selector (GUI)
+-------------------
 
 The module ``fsspec.gui`` contains a graphical file selector interface. It is built
 using `panel`_, which must be installed in order to use the GUI. Upon instantiation,
@@ -337,13 +326,62 @@ shown (or if none are selected, all files are shown).
 
 The interface provides the following outputs:
 
-- ``.urlpath``: the currently selected item (if any)
-- ``.storage_options``: the value of the kwargs box
-- ``.fs``: the current filesystem instance
-- ``.open_file()``: produces an ``OpenFile`` instance for the current selection
+#. ``.urlpath``: the currently selected item (if any)
+#. ``.storage_options``: the value of the kwargs box
+#. ``.fs``: the current filesystem instance
+#. ``.open_file()``: produces an ``OpenFile`` instance for the current selection
 
-Async
-=====
+Configuration
+-------------
+
+You can set default keyword arguments to pass to any fsspec backend by editing
+config files, providing environment variables, or editing the contents of
+the dictionary ``fsspec.config.conf``.
+
+Files are stored in the directory pointed to by ``FSSPEC_CONFIG_DIR``,
+``"~/.config/fsspec/`` by default. All \*.ini and \*.json files will be
+loaded and parsed from their respective formats and fed into the config dict
+at import time. For example, if there is a file "~/.config/fsspec/conf.json"
+containing
+
+.. code-block:: json
+
+   {"file": {"auto_mkdir": true}}
+
+then any instance of the file system whose protocol is "file" (i.e.,
+``LocalFileSystem``) with be passed the kwargs ``auto_mkdir=True``
+**unless** the user supplies the kwarg themselves.
+
+For instance:
+
+.. code-block:: python
+
+    import fsspec
+    fs = fsspec.filesystem("file")
+    assert fs.auto_mkdir == True
+    fs = fsspec.filesystem("file", auto_mkdir=False)
+    assert fs.auto_mkdir == False
+
+Obviously, you should only define default values that are appropriate for
+a given file system implementation. INI files only support string values.
+
+Alternatively, you can provide overrides with environment variables of the style
+``FSSPEC_{protocol}=<json_dict_value>`` and
+``FSSPEC_{protocol}_{kwargname}=<string_value>``.
+
+Configuration is determined in the following order, with later items winning:
+
+#. ini and json files in the config directory (``FSSPEC_CONFIG_DIRECTORY`` or ``$HOME/.config/fsspec/``), sorted
+   lexically by filename
+#. ``FSSPEC_{protocol}`` environment variables
+#. ``FSSPEC_{protocol}_{kwargname}`` environment variables
+#. the contents of ``fsspec.config.conf``, which can be edited at runtime
+#. kwargs explicitly passed, whether with ``fsspec.open``, ``fsspec.filesystem``
+   or directly instantiating the implementation class.
+
+
+Asynchronous
+------------
 
 Some implementations, those deriving from ``fsspec.asyn.AsyncFileSystem``, have
 async/coroutine implementations of some file operations. The async methods have
@@ -351,6 +389,22 @@ names beginning with ``_``, and listed in the ``asyn`` module; synchronous or
 blocking functions are automatically generated, which will operate via an
 event loop in another thread, by default.
 
-Async methods allow for concurrent
-execution of certain batch operations such as ``get``, ``rm`` and ``cat`` even when
-called via the blocking API.
+See :doc:`async` for modes of operation and how to implement such file systems.
+
+
+Callbacks
+---------
+
+Some methods support a ``callback=`` argument, which is the entry point to
+providing feedback on transfers to the user or any other logging service. This
+feature is new and experimental and supported by varying amounts in the
+backends.
+
+See the docstrings in the callbacks module for further details.
+``fsspec.callbacks.TqdmCallback`` can be used to display a progress bar using
+tqdm.
+
+.. raw:: html
+
+    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>

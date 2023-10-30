@@ -1,3 +1,156 @@
+fsspec (2023.10.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * d/copyright: Add License entry for versioneer.py file.
+
+ -- Emmanuel Arias <eamanu@debian.org>  Sat, 28 Oct 2023 08:05:44 -0300
+
+fsspec (2023.9.2-1) unstable; urgency=medium
+
+  * New upstream release.
+  * d/control: Update my contact information. Also update in d/copyright
+    file.
+  * d/patches/0002-Remove-privacy-breach-in-documentation.patch: Add patch to
+    remove potential security breach.
+
+ -- Emmanuel Arias <eamanu@debian.org>  Sat, 14 Oct 2023 17:11:23 -0300
+
+fsspec (2023.6.0-1) unstable; urgency=medium
+
+  * New upstream version.
+  * d/control: Add python3-sphinx-design as build dependency. It is needed for
+    build documentation package.
+  * d/patches/turn-off-assert-in-debian.patch: Update patch according to new
+    upstream release code change.
+  * d/rules: Ignore test_dbfs_read_range and test_dbfs_read_range_chunked
+    tests because they need http connections.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Mon, 19 Jun 2023 01:40:44 -0300
+
+fsspec (2023.3.0-1~exp1) experimental; urgency=medium
+
+  * New upstream version.
+  * d/patches/0001-explicit-use-of-127.0.0.1.patch: Remove patch. It was
+    already applied by upstream.
+  * d/control: Move python3-tqdm from Recommends binary package to
+    Build-Depends source package.
+  * d/control: Bump Standards-Version to 4.6.2 (from 4.6.0.1; no further
+    changes).
+  * d/patches/turn-off-assert-in-debian.patch: Add patch to turn off an
+    assert in test_make_path_posix test.
+  * d/source/lintian-overrides: Remove unnecessary lintian override.
+    - Add source-is-missing in lintian-overrides. It's a false positive.
+  * d/tests/control: Add python3-tqdm as Depends.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Sat, 01 Apr 2023 15:51:44 -0300
+
+fsspec (2022.11.0-1) unstable; urgency=medium
+
+  * d/rules: Add LC_ALL=C.UTF-8 LANGUAGE=C.UTF-8 variables during the
+    documentation package build. This make the package reproducible.
+  * New upstream release.
+  * d/patches: Remove 0001-explicit-use-of-127.0.0.1.patch. It was already
+    applied for upstream.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Sat, 12 Nov 2022 14:01:09 -0300
+
+fsspec (2022.10.0-1) unstable; urgency=medium
+
+  [ Emmanuel Arias ]
+  * New upstream version.
+  * d/control: Bump Standards-Version to 4.6.1.1 (from 4.6.1; no further
+    changes).
+  * d/source/lintian-overrides: Override lintian error that is a false
+    positive.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Sat, 29 Oct 2022 07:37:49 +0000
+
+fsspec (2022.8.2-1) unstable; urgency=medium
+
+  [ Emmanuel Arias ]
+  * New upstream version.
+  * d/source/lintian-overrides: Remove unused override.
+    missing-build-dependency-for-dh-addon is not longer reported.
+  * d/patches/0001-explicit-use-of-127.0.0.1.patch: Forward issue to upstream.
+
+  [ Jeroen Ploemen ]
+  * Bump Standards-Version to 4.6.1 (from 4.6.0.1; no further changes).
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Wed, 07 Sep 2022 05:57:49 +0000
+
+fsspec (2022.5.0-1) unstable; urgency=medium
+
+  * New upstream version.
+  * d/control: Add python3-tqdm as Build Dependency.
+  * d/patches: Update 0001-explicit-use-of-127.0.0.1.patch according to the
+    new changes made by upstream.
+  * d/tests/control: Add python3-tqdm as autopkgtest dependency.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Sat, 28 May 2022 05:52:43 +0000
+
+fsspec (2022.3.0-2) unstable; urgency=medium
+
+  * d/patches: Add patch to replace the use of test server in localhost
+    to 127.0.0.1, to avoid issues with host configured only with ipv6.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Tue, 19 Apr 2022 08:39:29 +0000
+
+fsspec (2022.3.0-1) unstable; urgency=medium
+
+  * New upstream version 2022.3.0
+  * d/control: Add python3-tqdm to Recommends of the binary package.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Mon, 11 Apr 2022 05:45:39 +0000
+
+fsspec (2022.02.0-1) unstable; urgency=medium
+
+  * New upstream version.
+  * d/control: Add python3-pytest-mock and python3-pytest-asyncio
+    packageas used in tests as build depends.
+  * d/patches: Remove patches that comment the use of the theme
+    sphinx_rtd_theme.
+    - d/control: Add python3-sphinx-rtd-theme package as Build Depends.
+  * d/tests/control: Add python3-pytest-mock and python3-pytest-asyncio as
+    Depends in autopkgtest.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Sat, 12 Mar 2022 06:43:46 +0000
+
+fsspec (2022.01.0-1) unstable; urgency=medium
+
+  * d/gbp.conf: Set debian/master as default branch.
+  * d/tests: Add autopkgtest.
+  * Run wrap-and-sort.
+  * New upstream version (Closes: #983883).
+  * d/control: Bump Standards-Version to 4.6.0.1. No changes needed.
+  * d/control: Add Build-Depends on python3-pytest, python3-numpy and
+    python3-aiohttp. They are used in tests.
+  * d/rules: Run tests in build time.
+    - Ignore tests that need http connections.
+    - Copy tests from source to the build directory. The tests folders are
+      ignored by dh_auto_build.
+  * d/control: Add Rules-Requires-Root: no.
+  * d/control: Clarify the long description of python-fsspec-doc that this
+    package contains the documentation.
+  * d/control: Update Vcs-* links to be according to the new repository name.
+  * d/copyright: Add upstream contact information.
+  * d/control: Build with pybuild's pyproject plugin. Add
+    pybuild-plugin-pyproject as Build Depends.
+  * Update the upstream homepage. Update it in d/control, d/copyright and
+    d/watch.
+  * d/tests: use the upstream testsuite as autopkgtest.
+  * d/control: Update source package Build-Depends and binary package
+    Recommends.
+    - Remove python3-certifi from Build-Depends. It is not used.
+    - Add python3-pytest-vcr as Build-Depends, it is needed for tests.
+    - Add python3-dask, python3-distributed, python3-requests, python3-dropbox,
+      python3-pygit2, python3-paramiko, python3-fusepy, python3-libarchive-c,
+      git as Recommends. This is to extend the features of the package.
+  * d/copyright: Update debian/* files copyright year.
+  * d/source/lintian-overrides: Override missing-build-dependency-for-dh-addon
+    to avoid a wrong lintian error until #1003668 be closed.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Sun, 06 Feb 2022 11:07:17 +0000
+
 fsspec (0.8.4-1) unstable; urgency=medium
 
   [Emmanuel Arias]

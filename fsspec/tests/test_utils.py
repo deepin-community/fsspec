@@ -1,16 +1,21 @@
 import io
-import pytest
 import sys
+from unittest.mock import Mock
+
+import pytest
+
+import fsspec.utils
 from fsspec.utils import (
     can_be_local,
-    infer_storage_options,
-    seek_delimiter,
-    read_block,
     common_prefix,
+    infer_storage_options,
+    merge_offset_ranges,
+    mirror_from,
     other_paths,
-    setup_logger,
+    read_block,
+    seek_delimiter,
+    setup_logging,
 )
-
 
 WIN = sys.platform.startswith("win")
 
@@ -200,8 +205,8 @@ def test_infer_options():
     # include it in the path. Test that:
     # - Parsing doesn't lowercase the bucket
     # - The bucket is included in path
-    for protocol in ["s3", "gcs", "gs"]:
-        options = infer_storage_options("%s://Bucket-name.com/test.csv" % protocol)
+    for protocol in ["s3", "s3a", "gcs", "gs"]:
+        options = infer_storage_options(f"{protocol}://Bucket-name.com/test.csv")
         assert options["path"] == "Bucket-name.com/test.csv"
 
     with pytest.raises(KeyError):
@@ -250,19 +255,27 @@ def test_common_prefix(paths, out):
 
 
 @pytest.mark.parametrize(
-    "paths, other, is_dir, expected",
+    "paths, other, exists, expected",
     (
         (["/path1"], "/path2", False, ["/path2"]),
         (["/path1"], "/path2", True, ["/path2/path1"]),
-        (["/path1"], "/path2", None, ["/path2"]),
+        (["/path1"], "/path2", False, ["/path2"]),
         (["/path1"], "/path2/", True, ["/path2/path1"]),
+        (["/path1"], ["/path2"], False, ["/path2"]),
         (["/path1"], ["/path2"], True, ["/path2"]),
+        (["/path1", "/path2"], "/path2", False, ["/path2/path1", "/path2/path2"]),
         (["/path1", "/path2"], "/path2", True, ["/path2/path1", "/path2/path2"]),
         (
             ["/more/path1", "/more/path2"],
             "/path2",
-            True,
+            False,
             ["/path2/path1", "/path2/path2"],
+        ),
+        (
+            ["/more/path1", "/more/path2"],
+            "/path2",
+            True,
+            ["/path2/more/path1", "/path2/more/path2"],
         ),
         (
             ["/more/path1", "/more/path2"],
@@ -272,26 +285,51 @@ def test_common_prefix(paths, out):
         ),
         (
             ["/more/path1", "/more/path2"],
+            "/path2",
+            True,
+            ["/path2/more/path1", "/path2/more/path2"],
+        ),
+        (
+            ["/more/path1", "/more/path2"],
             "/path2/",
-            None,
+            False,
             ["/path2/path1", "/path2/path2"],
+        ),
+        (
+            ["/more/path1", "/more/path2"],
+            "/path2/",
+            True,
+            ["/path2/more/path1", "/path2/more/path2"],
         ),
         (
             ["/more/path1", "/diff/path2"],
             "/path2/",
-            None,
+            False,
             ["/path2/more/path1", "/path2/diff/path2"],
+        ),
+        (
+            ["/more/path1", "/diff/path2"],
+            "/path2/",
+            True,
+            ["/path2/more/path1", "/path2/diff/path2"],
+        ),
+        (["a", "b/", "b/c"], "dest/", False, ["dest/a", "dest/b/", "dest/b/c"]),
+        (
+            ["/a", "/b/", "/b/c"],
+            "dest/",
+            False,
+            ["dest/a", "dest/b/", "dest/b/c"],
         ),
     ),
 )
-def test_other_paths(paths, other, is_dir, expected):
-    assert other_paths(paths, other, is_dir) == expected
+def test_other_paths(paths, other, exists, expected):
+    assert other_paths(paths, other, exists) == expected
 
 
 def test_log():
     import logging
 
-    logger = setup_logger("fsspec.test")
+    logger = setup_logging(logger_name="fsspec.test")
     assert logger.level == logging.DEBUG
 
 
@@ -309,3 +347,73 @@ def test_log():
 def test_can_local(par):
     url, outcome = par
     assert can_be_local(url) == outcome
+
+
+def test_mirror_from():
+
+    mock = Mock()
+    mock.attr = 1
+
+    @mirror_from("client", ["attr", "func_1", "func_2"])
+    class Real:
+        @property
+        def client(self):
+            return mock
+
+        def func_2(self):
+            assert False, "have to overwrite this"
+
+        def func_3(self):
+            return "should succeed"
+
+    obj = Real()
+    assert obj.attr == mock.attr
+
+    obj.func_1()
+    mock.func_1.assert_called()
+
+    obj.func_2(1, 2)
+    mock.func_2.assert_called_with(1, 2)
+
+    assert obj.func_3() == "should succeed"
+    mock.func_3.assert_not_called()
+
+
+@pytest.mark.parametrize("max_gap", [0, 32])
+@pytest.mark.parametrize("max_block", [None, 128])
+def test_merge_offset_ranges(max_gap, max_block):
+
+    # Input ranges
+    # (Using out-of-order ranges for full coverage)
+    paths = ["foo", "bar", "bar", "bar", "foo"]
+    starts = [0, 0, 512, 64, 32]
+    ends = [32, 32, 1024, 256, 64]
+
+    # Call merge_offset_ranges
+    (result_paths, result_starts, result_ends,) = merge_offset_ranges(
+        paths,
+        starts,
+        ends,
+        max_gap=max_gap,
+        max_block=max_block,
+    )
+
+    # Check result
+    if max_block is None and max_gap == 32:
+        expect_paths = ["bar", "bar", "foo"]
+        expect_starts = [0, 512, 0]
+        expect_ends = [256, 1024, 64]
+    else:
+        expect_paths = ["bar", "bar", "bar", "foo"]
+        expect_starts = [0, 64, 512, 0]
+        expect_ends = [32, 256, 1024, 64]
+
+    assert expect_paths == result_paths
+    assert expect_starts == result_starts
+    assert expect_ends == result_ends
+
+
+def test_size():
+    f = io.BytesIO(b"hello")
+    assert fsspec.utils.file_size(f) == 5
+    assert f.tell() == 0

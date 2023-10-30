@@ -1,6 +1,4 @@
 """Helper functions for a standard streaming compression API"""
-from bz2 import BZ2File
-from gzip import GzipFile
 from zipfile import ZipFile
 
 import fsspec.utils
@@ -41,13 +39,11 @@ def register_compression(name, callback, extensions, force=False):
 
     # Validate registration
     if name in compr and not force:
-        raise ValueError("Duplicate compression registration: %s" % name)
+        raise ValueError(f"Duplicate compression registration: {name}")
 
     for ext in extensions:
         if ext in fsspec.utils.compressions and not force:
-            raise ValueError(
-                "Duplicate compression file extension: %s (%s)" % (ext, name)
-            )
+            raise ValueError(f"Duplicate compression file extension: {ext} ({name})")
 
     compr[name] = callback
 
@@ -69,8 +65,27 @@ def unzip(infile, mode="rb", filename=None, **kwargs):
 
 
 register_compression("zip", unzip, "zip")
-register_compression("bz2", BZ2File, "bz2")
-register_compression("gzip", lambda f, **kwargs: GzipFile(fileobj=f, **kwargs), "gz")
+
+try:
+    from bz2 import BZ2File
+except ImportError:
+    pass
+else:
+    register_compression("bz2", BZ2File, "bz2")
+
+try:  # pragma: no cover
+    from isal import igzip
+
+    def isal(infile, mode="rb", **kwargs):
+        return igzip.IGzipFile(fileobj=infile, mode=mode, **kwargs)
+
+    register_compression("gzip", isal, "gz")
+except ImportError:
+    from gzip import GzipFile
+
+    register_compression(
+        "gzip", lambda f, **kwargs: GzipFile(fileobj=f, **kwargs), "gz"
+    )
 
 try:
     from lzma import LZMAFile
@@ -93,8 +108,9 @@ class SnappyFile(AbstractBufferedFile):
     def __init__(self, infile, mode, **kwargs):
         import snappy
 
-        self.details = {"size": 999999999}  # not true, but OK if we don't seek
-        super().__init__(fs=None, path="snappy", mode=mode.strip("b") + "b", **kwargs)
+        super().__init__(
+            fs=None, path="snappy", mode=mode.strip("b") + "b", size=999999999, **kwargs
+        )
         self.infile = infile
         if "r" in mode:
             self.codec = snappy.StreamDecompressor()
@@ -127,7 +143,7 @@ try:
     # standard implementation.
     register_compression("snappy", SnappyFile, [])
 
-except (ImportError, NameError):
+except (ImportError, NameError, AttributeError):
     pass
 
 try:
@@ -151,3 +167,8 @@ try:
     register_compression("zstd", zstandard_file, "zst")
 except ImportError:
     pass
+
+
+def available_compressions():
+    """Return a list of the implemented compressions."""
+    return list(compr)

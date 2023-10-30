@@ -1,17 +1,20 @@
-import contextlib
-import panel as pn
-import os
 import ast
+import contextlib
 import logging
+import os
 import re
+from typing import ClassVar, Sequence
+
+import panel as pn
+
+from .core import OpenFile, get_filesystem_class, split_protocol
 from .registry import known_implementations
-from .core import split_protocol, get_filesystem_class, OpenFile
 
 pn.extension()
 logger = logging.getLogger("fsspec.gui")
 
 
-class SigSlot(object):
+class SigSlot:
     """Signal-slot mixin, for Panel event passing
 
     Include this class in a widget manager's superclasses to be able to
@@ -23,9 +26,11 @@ class SigSlot(object):
     By default, all signals emit a DEBUG logging statement.
     """
 
-    signals = []  # names of signals that this class may emit
-    # each of which must be set by _register for any new instance
-    slots = []  # names of actions that this class may respond to
+    # names of signals that this class may emit each of which must be
+    # set by _register for any new instance
+    signals: ClassVar[Sequence[str]] = []
+    # names of actions that this class may respond to
+    slots: ClassVar[Sequence[str]] = []
 
     # each of which must be a method name
 
@@ -65,7 +70,7 @@ class SigSlot(object):
             same name.
         """
         if name not in self.signals:
-            raise ValueError("Attempt to assign an undeclared signal: %s" % name)
+            raise ValueError(f"Attempt to assign an undeclared signal: {name}")
         self._sigs[name] = {
             "widget": widget,
             "callbacks": [],
@@ -136,7 +141,7 @@ class SigSlot(object):
 
         Calling of callbacks will halt whenever one returns False.
         """
-        logger.log(self._sigs[sig]["log"], "{}: {}".format(sig, value))
+        logger.log(self._sigs[sig]["log"], f"{sig}: {value}")
         for callback in self._sigs[sig]["callbacks"]:
             if isinstance(callback, str):
                 self._emit(callback)
@@ -252,12 +257,14 @@ class FileSelector(SigSlot):
             width_policy="max",
         )
         self.protocol = pn.widgets.Select(
-            options=list(sorted(known_implementations)),
+            options=sorted(known_implementations),
             value=self.init_protocol,
             name="protocol",
             align="center",
         )
-        self.kwargs = pn.widgets.TextInput(name="kwargs", value="{}", align="center")
+        self.kwargs = pn.widgets.TextInput(
+            name="kwargs", value=self.init_kwargs, align="center"
+        )
         self.go = pn.widgets.Button(name="⇨", align="end", width=45)
         self.main = SingleSelect(size=10)
         self.home = pn.widgets.Button(name="🏠", width=40, height=30, align="end")
@@ -312,7 +319,7 @@ class FileSelector(SigSlot):
     def urlpath(self):
         """URL of currently selected item"""
         return (
-            (self.protocol.value + "://" + self.main.value[0])
+            (f"{self.protocol.value}://{self.main.value[0]}")
             if self.main.value
             else None
         )

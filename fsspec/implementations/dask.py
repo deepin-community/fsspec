@@ -1,8 +1,9 @@
-from distributed.worker import get_worker
-from distributed.client import _get_global_client, Client
 import dask
-from fsspec.spec import AbstractFileSystem, AbstractBufferedFile
+from distributed.client import Client, _get_global_client
+from distributed.worker import Worker
+
 from fsspec import filesystem
+from fsspec.spec import AbstractBufferedFile, AbstractFileSystem
 from fsspec.utils import infer_storage_options
 
 
@@ -14,6 +15,10 @@ def _get_client(client):
     else:
         # e.g., connection string
         return Client(client)
+
+
+def _in_worker():
+    return bool(Worker._instances)
 
 
 class DaskWorkerFileSystem(AbstractFileSystem):
@@ -50,14 +55,13 @@ class DaskWorkerFileSystem(AbstractFileSystem):
             return {}
 
     def _determine_worker(self):
-        try:
-            get_worker()
+        if _in_worker():
             self.worker = True
             if self.fs is None:
                 self.fs = filesystem(
                     self.target_protocol, **(self.target_options or {})
                 )
-        except ValueError:
+        else:
             self.worker = False
             self.client = _get_client(self.client)
             self.rfs = dask.delayed(self)
@@ -99,7 +103,7 @@ class DaskWorkerFileSystem(AbstractFileSystem):
         block_size=None,
         autocommit=True,
         cache_options=None,
-        **kwargs
+        **kwargs,
     ):
         if self.worker:
             return self.fs._open(
@@ -108,7 +112,7 @@ class DaskWorkerFileSystem(AbstractFileSystem):
                 block_size=block_size,
                 autocommit=autocommit,
                 cache_options=cache_options,
-                **kwargs
+                **kwargs,
             )
         else:
             return DaskFile(
@@ -118,7 +122,7 @@ class DaskWorkerFileSystem(AbstractFileSystem):
                 block_size=block_size,
                 autocommit=autocommit,
                 cache_options=cache_options,
-                **kwargs
+                **kwargs,
             )
 
     def fetch_range(self, path, mode, start, end):
@@ -140,7 +144,7 @@ class DaskFile(AbstractBufferedFile):
         pass
 
     def _initiate_upload(self):
-        """ Create remote file/upload """
+        """Create remote file/upload"""
         pass
 
     def _fetch_range(self, start, end):

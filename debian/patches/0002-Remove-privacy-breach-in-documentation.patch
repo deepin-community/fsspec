@@ -1,0 +1,131 @@
+From: Emmanuel Arias <eamanu@yaerobi.com>
+Date: Sat, 14 Oct 2023 18:37:10 -0300
+Subject: Remove privacy breach in documentation
+
+This patch remove links to external links that can be a potential privacy
+breach by fetching data from an external website at runtime.
+---
+ docs/source/api.rst       | 5 -----
+ docs/source/async.rst     | 5 -----
+ docs/source/changelog.rst | 4 ----
+ docs/source/copying.rst   | 5 -----
+ docs/source/developer.rst | 4 ----
+ docs/source/features.rst  | 5 -----
+ docs/source/index.rst     | 5 -----
+ docs/source/intro.rst     | 4 ----
+ docs/source/usage.rst     | 4 ----
+ 9 files changed, 41 deletions(-)
+
+diff --git a/docs/source/api.rst b/docs/source/api.rst
+index 29b1f5f..31b237a 100644
+--- a/docs/source/api.rst
++++ b/docs/source/api.rst
+@@ -272,8 +272,3 @@ Utilities
+    fsspec.utils.read_block
+ 
+ .. autofunction:: fsspec.utils.read_block
+-
+-.. raw:: html
+-
+-    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+-        async src="//gc.zgo.at/count.js"></script>
+diff --git a/docs/source/async.rst b/docs/source/async.rst
+index 58334b3..22202b7 100644
+--- a/docs/source/async.rst
++++ b/docs/source/async.rst
+@@ -147,8 +147,3 @@ available as the attribute ``.loop``.
+ .. autofunction:: fsspec.asyn.sync
+ 
+ .. autofunction:: fsspec.asyn.sync_wrapper
+-
+-.. raw:: html
+-
+-    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+-        async src="//gc.zgo.at/count.js"></script>
+diff --git a/docs/source/changelog.rst b/docs/source/changelog.rst
+index 06656a6..e296df4 100644
+--- a/docs/source/changelog.rst
++++ b/docs/source/changelog.rst
+@@ -822,7 +822,3 @@ Version 0.6.0
+ * Added a ``detail=True`` parameter to :meth:`fsspec.spec.AbstractFileSystem.ls` (:pr:`168`)
+ * Fixed handling of UNC/DFS paths (:issue:`154`)
+ 
+-.. raw:: html
+-
+-    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+-        async src="//gc.zgo.at/count.js"></script>
+diff --git a/docs/source/copying.rst b/docs/source/copying.rst
+index 25bd341..d091f35 100644
+--- a/docs/source/copying.rst
++++ b/docs/source/copying.rst
+@@ -341,8 +341,3 @@ Forward slashes are used for directory separators throughout.
+ 
+     The trailing slash is required on the new directory otherwise it is interpreted as a filename
+     rather than a directory.
+-
+-.. raw:: html
+-
+-    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+-        async src="//gc.zgo.at/count.js"></script>
+diff --git a/docs/source/developer.rst b/docs/source/developer.rst
+index 07777f1..c419631 100644
+--- a/docs/source/developer.rst
++++ b/docs/source/developer.rst
+@@ -120,7 +120,3 @@ commit hooks if you intend to make PRs, as linting is done as part of the CI.
+ Docs use sphinx and the numpy docstring style. Please add an entry to the changelog
+ along with any PR.
+ 
+-.. raw:: html
+-
+-    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+-        async src="//gc.zgo.at/count.js"></script>
+diff --git a/docs/source/features.rst b/docs/source/features.rst
+index 907084e..db613e9 100644
+--- a/docs/source/features.rst
++++ b/docs/source/features.rst
+@@ -403,8 +403,3 @@ backends.
+ See the docstrings in the callbacks module for further details.
+ ``fsspec.callbacks.TqdmCallback`` can be used to display a progress bar using
+ tqdm.
+-
+-.. raw:: html
+-
+-    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+-        async src="//gc.zgo.at/count.js"></script>
+diff --git a/docs/source/index.rst b/docs/source/index.rst
+index 5919968..229871a 100644
+--- a/docs/source/index.rst
++++ b/docs/source/index.rst
+@@ -115,8 +115,3 @@ The current list of known implementations can be found as follows
+    async.rst
+    api.rst
+    changelog.rst
+-
+-.. raw:: html
+-
+-    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+-        async src="//gc.zgo.at/count.js"></script>
+diff --git a/docs/source/intro.rst b/docs/source/intro.rst
+index 652c758..0ac31d9 100644
+--- a/docs/source/intro.rst
++++ b/docs/source/intro.rst
+@@ -93,7 +93,3 @@ to derive from, ``AbstractFileSystem``.
+ 
+ .. _zarr: https://zarr.readthedocs.io
+ 
+-.. raw:: html
+-
+-    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+-        async src="//gc.zgo.at/count.js"></script>
+diff --git a/docs/source/usage.rst b/docs/source/usage.rst
+index 96c6936..15c7670 100644
+--- a/docs/source/usage.rst
++++ b/docs/source/usage.rst
+@@ -118,7 +118,3 @@ or write mode (create names). Critically, the file on the backend system is not
+             if "KENYA" in line:
+                 break
+ 
+-.. raw:: html
+-
+-    <script data-goatcounter="https://fsspec.goatcounter.com/count"
+-        async src="//gc.zgo.at/count.js"></script>
