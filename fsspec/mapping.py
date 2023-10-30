@@ -1,5 +1,9 @@
 import array
+import posixpath
+import warnings
 from collections.abc import MutableMapping
+from functools import cached_property
+
 from .core import url_to_fs
 
 
@@ -19,23 +23,22 @@ class FSMap(MutableMapping):
 
     Examples
     --------
-    >>> fs = FileSystem(**parameters) # doctest: +SKIP
-    >>> d = FSMap('my-data/path/', fs) # doctest: +SKIP
+    >>> fs = FileSystem(**parameters)  # doctest: +SKIP
+    >>> d = FSMap('my-data/path/', fs)  # doctest: +SKIP
     or, more likely
     >>> d = fs.get_mapper('my-data/path/')
 
-    >>> d['loc1'] = b'Hello World' # doctest: +SKIP
-    >>> list(d.keys()) # doctest: +SKIP
+    >>> d['loc1'] = b'Hello World'  # doctest: +SKIP
+    >>> list(d.keys())  # doctest: +SKIP
     ['loc1']
-    >>> d['loc1'] # doctest: +SKIP
+    >>> d['loc1']  # doctest: +SKIP
     b'Hello World'
     """
 
     def __init__(self, root, fs, check=False, create=False, missing_exceptions=None):
         self.fs = fs
-        self.root = fs._strip_protocol(root).rstrip(
-            "/"
-        )  # we join on '/' in _key_to_str
+        self.root = fs._strip_protocol(root).rstrip("/")
+        self._root_key_to_str = fs._strip_protocol(posixpath.join(root, "x"))[:-1]
         if missing_exceptions is None:
             missing_exceptions = (
                 FileNotFoundError,
@@ -43,17 +46,26 @@ class FSMap(MutableMapping):
                 NotADirectoryError,
             )
         self.missing_exceptions = missing_exceptions
+        self.check = check
+        self.create = create
         if create:
             if not self.fs.exists(root):
                 self.fs.mkdir(root)
         if check:
             if not self.fs.exists(root):
                 raise ValueError(
-                    "Path %s does not exist. Create "
-                    " with the ``create=True`` keyword" % root
+                    f"Path {root} does not exist. Create "
+                    f" with the ``create=True`` keyword"
                 )
             self.fs.touch(root + "/a")
             self.fs.rm(root + "/a")
+
+    @cached_property
+    def dirfs(self):
+        """dirfs instance that can be used with the same keys as the mapper"""
+        from .implementations.dirfs import DirFileSystem
+
+        return DirFileSystem(path=self._root_key_to_str, fs=self.fs)
 
     def clear(self):
         """Remove all keys below root - empties out mapping"""
@@ -87,6 +99,8 @@ class FSMap(MutableMapping):
         oe = on_error if on_error == "raise" else "return"
         try:
             out = self.fs.cat(keys2, on_error=oe)
+            if isinstance(out, bytes):
+                out = {keys2[0]: out}
         except self.missing_exceptions as e:
             raise KeyError from e
         out = {
@@ -106,7 +120,7 @@ class FSMap(MutableMapping):
         ----------
         values_dict: dict(str, bytes)
         """
-        values = {self._key_to_str(k): v for k, v in values_dict.items()}
+        values = {self._key_to_str(k): maybe_convert(v) for k, v in values_dict.items()}
         self.fs.pipe(values)
 
     def delitems(self, keys):
@@ -115,11 +129,16 @@ class FSMap(MutableMapping):
 
     def _key_to_str(self, key):
         """Generate full path for the key"""
-        if isinstance(key, (tuple, list)):
-            key = str(tuple(key))
-        else:
+        if not isinstance(key, str):
+            # raise TypeError("key must be of type `str`, got `{type(key).__name__}`"
+            warnings.warn(
+                "from fsspec 2023.5 onward FSMap non-str keys will raise TypeError",
+                DeprecationWarning,
+            )
+            if isinstance(key, list):
+                key = tuple(key)
             key = str(key)
-        return "/".join([self.root, key]) if self.root else key
+        return f"{self._root_key_to_str}{key}"
 
     def _str_to_key(self, s):
         """Strip path of to leave key name"""
@@ -137,6 +156,7 @@ class FSMap(MutableMapping):
         return result
 
     def pop(self, key, default=None):
+        """Pop data"""
         result = self.__getitem__(key, default)
         try:
             del self[key]
@@ -147,11 +167,8 @@ class FSMap(MutableMapping):
     def __setitem__(self, key, value):
         """Store value in key"""
         key = self._key_to_str(key)
-        if isinstance(value, array.array):  # pragma: no cover
-            # back compat, array.array used to work
-            value = bytearray(value)
         self.fs.mkdirs(self.fs._parent(key), exist_ok=True)
-        self.fs.pipe_file(key, value)
+        self.fs.pipe_file(key, maybe_convert(value))
 
     def __iter__(self):
         return (self._str_to_key(x) for x in self.fs.find(self.root))
@@ -175,7 +192,25 @@ class FSMap(MutableMapping):
         return FSMap, (self.root, self.fs, False, False, self.missing_exceptions)
 
 
-def get_mapper(url, check=False, create=False, missing_exceptions=None, **kwargs):
+def maybe_convert(value):
+    if isinstance(value, array.array) or hasattr(value, "__array__"):
+        # bytes-like things
+        if hasattr(value, "dtype") and value.dtype.kind in "Mm":
+            # The buffer interface doesn't support datetime64/timdelta64 numpy
+            # arrays
+            value = value.view("int64")
+        value = bytes(memoryview(value))
+    return value
+
+
+def get_mapper(
+    url="",
+    check=False,
+    create=False,
+    missing_exceptions=None,
+    alternate_root=None,
+    **kwargs,
+):
     """Create key-value interface for given URL and options
 
     The URL will be of the form "protocol://location" and point to the root
@@ -195,9 +230,12 @@ def get_mapper(url, check=False, create=False, missing_exceptions=None, **kwargs
         Whether to make the directory corresponding to the root before
         instantiating
     missing_exceptions: None or tuple
-        If given, these excpetion types will be regarded as missing keys and
+        If given, these exception types will be regarded as missing keys and
         return KeyError when trying to read data. By default, you get
         (FileNotFoundError, IsADirectoryError, NotADirectoryError)
+    alternate_root: None or str
+        In cases of complex URLs, the parser may fail to pick the correct part
+        for the mapper root, so this arg can override
 
     Returns
     -------
@@ -205,4 +243,5 @@ def get_mapper(url, check=False, create=False, missing_exceptions=None, **kwargs
     """
     # Removing protocol here - could defer to each open() on the backend
     fs, urlpath = url_to_fs(url, **kwargs)
-    return FSMap(urlpath, fs, check, create, missing_exceptions=missing_exceptions)
+    root = alternate_root if alternate_root is not None else urlpath
+    return FSMap(root, fs, check, create, missing_exceptions=missing_exceptions)

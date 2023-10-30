@@ -1,24 +1,24 @@
-from functools import lru_cache
 import time
 from collections.abc import MutableMapping
+from functools import lru_cache
 
 
 class DirCache(MutableMapping):
     """
-    Caching of directory listings, in a structure like
+    Caching of directory listings, in a structure like::
 
-    {"path0": [
-        {"name": "path0/file0",
-         "size": 123,
-         "type": "file",
-         ...
-        },
-        {"name": "path0/file1",
-        },
-        ...
-        ],
-     "path1": [...]
-    }
+        {"path0": [
+            {"name": "path0/file0",
+             "size": 123,
+             "type": "file",
+             ...
+            },
+            {"name": "path0/file1",
+            },
+            ...
+            ],
+         "path1": [...]
+        }
 
     Parameters to this class control listing expiry or indeed turn
     caching off
@@ -29,7 +29,7 @@ class DirCache(MutableMapping):
         use_listings_cache=True,
         listings_expiry_time=None,
         max_paths=None,
-        **kwargs
+        **kwargs,
     ):
         """
 
@@ -38,7 +38,7 @@ class DirCache(MutableMapping):
         use_listings_cache: bool
             If False, this cache never returns items, but always reports KeyError,
             and setting items has no effect
-        listings_expiry_time: int (optional)
+        listings_expiry_time: int or float (optional)
             Time in seconds that a listing is considered valid. If None,
             listings do not expire.
         max_paths: int (optional)
@@ -54,7 +54,7 @@ class DirCache(MutableMapping):
         self.max_paths = max_paths
 
     def __getitem__(self, item):
-        if self.listings_expiry_time:
+        if self.listings_expiry_time is not None:
             if self._times.get(item, 0) - time.time() < -self.listings_expiry_time:
                 del self._cache[item]
         if self.max_paths:
@@ -80,14 +80,16 @@ class DirCache(MutableMapping):
         if self.max_paths:
             self._q(key)
         self._cache[key] = value
-        if self.listings_expiry_time:
+        if self.listings_expiry_time is not None:
             self._times[key] = time.time()
 
     def __delitem__(self, key):
         del self._cache[key]
 
     def __iter__(self):
-        return (k for k in self._cache if k in self)
+        entries = list(self._cache)
+
+        return (k for k in entries if k in self)
 
     def __reduce__(self):
         return (

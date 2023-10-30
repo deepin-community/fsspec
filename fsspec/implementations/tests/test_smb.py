@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Test SMBFileSystem class using a docker container
 """
@@ -7,12 +6,18 @@ import logging
 import shlex
 import subprocess
 import time
+
 import pytest
+
 import fsspec
 
 pytest.importorskip("smbprotocol")
 
 # ! pylint: disable=redefined-outer-name,missing-function-docstring
+
+# Test standard and non-standard ports
+default_port = 445
+port_test = [None, default_port, 9999]
 
 
 def stop_docker(container):
@@ -22,8 +27,8 @@ def stop_docker(container):
         subprocess.call(["docker", "rm", "-f", "-v", cid])
 
 
-@pytest.fixture(scope="module")
-def smb_params():
+@pytest.fixture(scope="module", params=port_test)
+def smb_params(request):
     try:
         pchk = ["docker", "run", "--name", "fsspec_test_smb", "hello-world"]
         subprocess.check_call(pchk)
@@ -35,15 +40,23 @@ def smb_params():
     # requires docker
     container = "fsspec_smb"
     stop_docker(container)
-    img = "docker run --name {} --detach -p 139:139 -p 445:445 dperson/samba"
-    cfg = " -p -u 'testuser;testpass' -s 'home;/share;no;no;no;testuser'"
-    cmd = img.format(container) + cfg
+    cfg = "-p -u 'testuser;testpass' -s 'home;/share;no;no;no;testuser'"
+    port = request.param if request.param is not None else default_port
+    img = (
+        f"docker run --name {container} --detach -p 139:139 -p {port}:445 dperson/samba"
+    )
+    cmd = f"{img} {cfg}"
     cid = subprocess.check_output(shlex.split(cmd)).strip().decode()
     logger = logging.getLogger("fsspec")
     logger.debug("Container: %s", cid)
     try:
         time.sleep(1)
-        yield dict(host="localhost", port=445, username="testuser", password="testpass")
+        yield {
+            "host": "localhost",
+            "port": request.param,
+            "username": "testuser",
+            "password": "testpass",
+        }
     finally:
         import smbclient  # pylint: disable=import-outside-toplevel
 
@@ -68,7 +81,10 @@ def test_simple(smb_params):
 
 
 def test_with_url(smb_params):
-    smb_url = "smb://{username}:{password}@{host}:{port}/home/someuser.txt"
+    if smb_params["port"] is None:
+        smb_url = "smb://{username}:{password}@{host}/home/someuser.txt"
+    else:
+        smb_url = "smb://{username}:{password}@{host}:{port}/home/someuser.txt"
     fwo = fsspec.open(smb_url.format(**smb_params), "wb")
     with fwo as fwr:
         fwr.write(b"hello")
@@ -102,3 +118,9 @@ def test_makedirs_exist_ok(smb_params):
     fsmb = fsspec.get_filesystem_class("smb")(**smb_params)
     fsmb.makedirs("/home/a/b/c")
     fsmb.makedirs("/home/a/b/c", exist_ok=True)
+
+
+def test_rename_from_upath(smb_params):
+    fsmb = fsspec.get_filesystem_class("smb")(**smb_params)
+    fsmb.makedirs("/home/a/b/c", exist_ok=True)
+    fsmb.mv("/home/a/b/c", "/home/a/b/d", recursive=False, maxdepth=None)

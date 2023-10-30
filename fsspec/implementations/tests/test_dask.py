@@ -1,4 +1,5 @@
 import pytest
+
 import fsspec
 
 pytest.importorskip("distributed")
@@ -19,11 +20,10 @@ def cli(tmpdir):
     try:
         yield client
     finally:
-        client.close()
+        client.shutdown()
 
 
 def test_basic(cli):
-
     fs = fsspec.filesystem("dask", target_protocol="memory")
-    assert fs.ls("") == ["afile"]
-    assert fs.cat("afile") == b"data"
+    assert fs.ls("", detail=False) == ["/afile"]
+    assert fs.cat("/afile") == b"data"

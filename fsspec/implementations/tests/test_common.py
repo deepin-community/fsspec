@@ -1,5 +1,6 @@
 import datetime
 import time
+
 import pytest
 
 from fsspec import AbstractFileSystem
@@ -17,11 +18,14 @@ def test_created(fs: AbstractFileSystem, temp_file):
             fs.rm(temp_file)
 
 
-@pytest.mark.parametrize("fs", ["local"], indirect=["fs"])
+@pytest.mark.parametrize("fs", ["local", "memory", "arrow"], indirect=["fs"])
 def test_modified(fs: AbstractFileSystem, temp_file):
     try:
         fs.touch(temp_file)
-        created = fs.created(path=temp_file)
+        # created = fs.created(path=temp_file)
+        created = datetime.datetime.now(
+            tz=datetime.timezone.utc
+        )  # pyarrow only have modified
         time.sleep(0.05)
         fs.touch(temp_file)
         modified = fs.modified(path=temp_file)

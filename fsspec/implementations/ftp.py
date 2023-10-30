@@ -1,11 +1,16 @@
-from ftplib import FTP, Error, error_perm
+import os
+import sys
 import uuid
+import warnings
+from ftplib import FTP, Error, error_perm
+from typing import Any
+
 from ..spec import AbstractBufferedFile, AbstractFileSystem
-from ..utils import infer_storage_options
+from ..utils import infer_storage_options, isfilelike
 
 
 class FTPFileSystem(AbstractFileSystem):
-    """A filesystem over classic """
+    """A filesystem over classic FTP"""
 
     root_marker = "/"
     cachable = False
@@ -19,9 +24,10 @@ class FTPFileSystem(AbstractFileSystem):
         password=None,
         acct=None,
         block_size=None,
-        tempdir="/tmp",
+        tempdir=None,
         timeout=30,
-        **kwargs
+        encoding="utf-8",
+        **kwargs,
     ):
         """
         You can use _get_kwargs_from_urls to get some kwargs from
@@ -46,21 +52,32 @@ class FTPFileSystem(AbstractFileSystem):
             If given, the read-ahead or write buffer size.
         tempdir: str
             Directory on remote to put temporary files when in a transaction
+        timeout: int
+            Timeout of the ftp connection in seconds
+        encoding: str
+            Encoding to use for directories and filenames in FTP connection
         """
-        super(FTPFileSystem, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.host = host
         self.port = port
-        self.tempdir = tempdir
+        self.tempdir = tempdir or "/tmp"
         self.cred = username, password, acct
         self.timeout = timeout
+        self.encoding = encoding
         if block_size is not None:
             self.blocksize = block_size
         else:
-            self.blocksize = 2 ** 16
+            self.blocksize = 2**16
         self._connect()
 
     def _connect(self):
-        self.ftp = FTP(timeout=self.timeout)
+        if sys.version_info >= (3, 9):
+            self.ftp = FTP(timeout=self.timeout, encoding=self.encoding)
+        elif self.encoding:
+            warnings.warn("`encoding` not supported for python<3.9, ignoring")
+            self.ftp = FTP(timeout=self.timeout)
+        else:
+            self.ftp = FTP(timeout=self.timeout)
         self.ftp.connect(self.host, self.port)
         self.ftp.login(*self.cred)
 
@@ -106,7 +123,7 @@ class FTPFileSystem(AbstractFileSystem):
                     if info["type"] == "file":
                         out = [(path, info)]
                 except (Error, IndexError):
-                    raise FileNotFoundError
+                    raise FileNotFoundError(path)
         files = self.dircache.get(path, out)
         if not detail:
             return sorted([fn for fn, details in files])
@@ -115,12 +132,52 @@ class FTPFileSystem(AbstractFileSystem):
     def info(self, path, **kwargs):
         # implement with direct method
         path = self._strip_protocol(path)
+        if path == "/":
+            # special case, since this dir has no real entry
+            return {"name": "/", "size": 0, "type": "directory"}
         files = self.ls(self._parent(path).lstrip("/"), True)
         try:
             out = [f for f in files if f["name"] == path][0]
         except IndexError:
             raise FileNotFoundError(path)
         return out
+
+    def get_file(self, rpath, lpath, **kwargs):
+        if self.isdir(rpath):
+            if not os.path.exists(lpath):
+                os.mkdir(lpath)
+            return
+        if isfilelike(lpath):
+            outfile = lpath
+        else:
+            outfile = open(lpath, "wb")
+
+        def cb(x):
+            outfile.write(x)
+
+        self.ftp.retrbinary(
+            f"RETR {rpath}",
+            blocksize=self.blocksize,
+            callback=cb,
+        )
+        if not isfilelike(lpath):
+            outfile.close()
+
+    def cat_file(self, path, start=None, end=None, **kwargs):
+        if end is not None:
+            return super().cat_file(path, start, end, **kwargs)
+        out = []
+
+        def cb(x):
+            out.append(x)
+
+        self.ftp.retrbinary(
+            f"RETR {path}",
+            blocksize=self.blocksize,
+            rest=start,
+            callback=cb,
+        )
+        return b"".join(out)
 
     def _open(
         self,
@@ -129,7 +186,7 @@ class FTPFileSystem(AbstractFileSystem):
         block_size=None,
         cache_options=None,
         autocommit=True,
-        **kwargs
+        **kwargs,
     ):
         path = self._strip_protocol(path)
         block_size = block_size or self.blocksize
@@ -148,10 +205,32 @@ class FTPFileSystem(AbstractFileSystem):
         self.ftp.delete(path)
         self.invalidate_cache(self._parent(path))
 
-    def mkdir(self, path, **kwargs):
+    def rm(self, path, recursive=False, maxdepth=None):
+        paths = self.expand_path(path, recursive=recursive, maxdepth=maxdepth)
+        for p in reversed(paths):
+            if self.isfile(p):
+                self.rm_file(p)
+            else:
+                self.rmdir(p)
+
+    def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:
         path = self._strip_protocol(path)
+        parent = self._parent(path)
+        if parent != self.root_marker and not self.exists(parent) and create_parents:
+            self.mkdir(parent, create_parents=create_parents)
+
         self.ftp.mkd(path)
         self.invalidate_cache(self._parent(path))
+
+    def makedirs(self, path: str, exist_ok: bool = False) -> None:
+        path = self._strip_protocol(path)
+        if self.exists(path):
+            # NB: "/" does not "exist" as it has no directory entry
+            if not exist_ok:
+                raise FileExistsError(f"{path} exists without `exist_ok`")
+            # exists_ok=True -> no-op
+        else:
+            self.mkdir(path, create_parents=True)
 
     def rmdir(self, path):
         path = self._strip_protocol(path)
@@ -173,7 +252,7 @@ class FTPFileSystem(AbstractFileSystem):
             self.dircache.clear()
         else:
             self.dircache.pop(path, None)
-        super(FTPFileSystem, self).invalidate_cache(path)
+        super().invalidate_cache(path)
 
 
 class TransferDone(Exception):
@@ -194,7 +273,7 @@ class FTPFile(AbstractBufferedFile):
         autocommit=True,
         cache_type="readahead",
         cache_options=None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             fs,
@@ -204,7 +283,7 @@ class FTPFile(AbstractBufferedFile):
             autocommit=autocommit,
             cache_type=cache_type,
             cache_options=cache_options,
-            **kwargs
+            **kwargs,
         )
         if not autocommit:
             self.target = self.path
@@ -242,7 +321,7 @@ class FTPFile(AbstractBufferedFile):
 
         try:
             self.fs.ftp.retrbinary(
-                "RETR %s" % self.path,
+                f"RETR {self.path}",
                 blocksize=self.blocksize,
                 rest=start,
                 callback=callback,
@@ -253,14 +332,14 @@ class FTPFile(AbstractBufferedFile):
                 self.fs.ftp.abort()
                 self.fs.ftp.getmultiline()
             except Error:
-                self.fs.ftp._connect()
+                self.fs._connect()
 
         return b"".join(out)
 
     def _upload_chunk(self, final=False):
         self.buffer.seek(0)
         self.fs.ftp.storbinary(
-            "STOR " + self.path, self.buffer, blocksize=self.blocksize, rest=self.offset
+            f"STOR {self.path}", self.buffer, blocksize=self.blocksize, rest=self.offset
         )
         return True
 

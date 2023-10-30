@@ -1,17 +1,37 @@
 import os
 import pickle
-import pytest
 import tempfile
+import zipfile
+from contextlib import contextmanager
 
-from fsspec.core import (
-    _expand_paths,
-    OpenFile,
-    open_local,
-    get_compression,
-    open_files,
-    OpenFiles,
-)
+import pytest
+
 import fsspec
+from fsspec.core import (
+    OpenFile,
+    OpenFiles,
+    _expand_paths,
+    expand_paths_if_needed,
+    get_compression,
+    get_fs_token_paths,
+    open_files,
+    open_local,
+)
+
+
+@contextmanager
+def tempzip(data={}):
+    f = tempfile.mkstemp(suffix="zip")[1]
+    with zipfile.ZipFile(f, mode="w") as z:
+        for k, v in data.items():
+            z.writestr(k, v)
+    try:
+        yield f
+    finally:
+        try:
+            os.remove(f)
+        except OSError:
+            pass
 
 
 @pytest.mark.parametrize(
@@ -27,9 +47,38 @@ def test_expand_paths(path, name_function, num, out):
     assert _expand_paths(path, name_function, num) == out
 
 
+@pytest.mark.parametrize(
+    "create_files, path, out",
+    [
+        [["apath"], "apath", ["apath"]],
+        [["apath1"], "apath*", ["apath1"]],
+        [["apath1", "apath2"], "apath*", ["apath1", "apath2"]],
+        [["apath1", "apath2"], "apath[1]", ["apath1"]],
+        [["apath1", "apath11"], "apath?", ["apath1"]],
+    ],
+)
+def test_expand_paths_if_needed_in_read_mode(create_files, path, out):
+
+    d = str(tempfile.mkdtemp())
+    for f in create_files:
+        f = os.path.join(d, f)
+        open(f, "w").write("test")
+
+    path = os.path.join(d, path)
+
+    fs = fsspec.filesystem("file")
+    res = expand_paths_if_needed([path], "r", 0, fs, None)
+    assert [os.path.basename(p) for p in res] == out
+
+
 def test_expand_error():
     with pytest.raises(ValueError):
         _expand_paths("*.*", None, 1)
+
+
+@pytest.mark.parametrize("mode", ["w", "w+", "x", "x+"])
+def test_expand_fs_token_paths(mode):
+    assert len(get_fs_token_paths("path", mode, num=2, expand=True)[-1]) == 2
 
 
 def test_openfile_api(m):
@@ -40,7 +89,7 @@ def test_openfile_api(m):
     assert f.read() == b"data"
     f.close()
     with OpenFile(m, "somepath", mode="rt") as f:
-        f.read() == "data"
+        assert f.read() == "data"
 
 
 def test_openfile_open(m):
@@ -48,9 +97,7 @@ def test_openfile_open(m):
     f = of.open()
     f.write("hello")
     assert m.size("somepath") == 0  # no flush yet
-    del of
-    assert m.size("somepath") == 0  # still no flush
-    f.close()
+    of.close()
     assert m.size("somepath") == 5
 
 
@@ -59,7 +106,7 @@ def test_open_local():
     f1 = os.path.join(d1, "f1")
     open(f1, "w").write("test1")
     d2 = str(tempfile.mkdtemp())
-    fn = open_local("simplecache://" + f1, cache_storage=d2, target_protocol="file")
+    fn = open_local(f"simplecache://{f1}", cache_storage=d2, target_protocol="file")
     assert isinstance(fn, str)
     assert open(fn).read() == "test1"
     assert d2 in fn
@@ -103,10 +150,10 @@ def test_pathobject(tmpdir):
 
 def test_automkdir(tmpdir):
     dir = os.path.join(str(tmpdir), "a")
-    of = fsspec.open(os.path.join(dir, "afile"), "w")
-    with of:
-        pass
-    assert "afile" in os.listdir(dir)
+    of = fsspec.open(os.path.join(dir, "afile"), "w", auto_mkdir=False)
+    with pytest.raises(IOError):
+        with of:
+            pass
 
     dir = os.path.join(str(tmpdir), "b")
     of = fsspec.open(os.path.join(dir, "bfile"), "w", auto_mkdir=True)
@@ -140,13 +187,26 @@ def test_openfile_pickle_newline():
     assert test.newline == restored.newline
 
 
+def test_pickle_after_open_open():
+    of = fsspec.open(__file__, mode="rt")
+    test = of.open()
+    of2 = pickle.loads(pickle.dumps(of))
+    test2 = of2.open()
+    test.close()
+
+    assert not test2.closed
+    of.close()
+    of2.close()
+
+
 def test_mismatch():
-    with pytest.raises(ValueError, match="protocol"):
+    pytest.importorskip("s3fs")
+    with pytest.raises(ValueError):
         open_files(["s3://test/path.csv", "/other/path.csv"])
 
 
 def test_url_kwargs_chain(ftp_writable):
-    host, port, username, password = "localhost", 2121, "user", "pass"
+    host, port, username, password = ftp_writable
     data = b"hello"
     with fsspec.open(
         "ftp:///afile", "wb", host=host, port=port, username=username, password=password
@@ -154,8 +214,7 @@ def test_url_kwargs_chain(ftp_writable):
         f.write(data)
 
     with fsspec.open(
-        "simplecache::ftp://{}:{}@{}:{}/afile".format(username, password, host, port),
-        "rb",
+        f"simplecache::ftp://{username}:{password}@{host}:{port}//afile", "rb"
     ) as f:
         assert f.read() == data
 
@@ -166,6 +225,8 @@ def test_multi_context(tmpdir):
     assert isinstance(files, OpenFiles)
     assert isinstance(files[0], OpenFile)
     assert len(files) == 2
+    assert isinstance(files[:1], OpenFiles)
+    assert len(files[:1]) == 1
     with files as of:
         assert len(of) == 2
         assert not of[0].closed
@@ -177,3 +238,76 @@ def test_multi_context(tmpdir):
 def test_not_local():
     with pytest.raises(ValueError, match="attribute local_file=True"):
         open_local("memory://afile")
+
+
+def test_url_to_fs(ftp_writable):
+    host, port, username, password = ftp_writable
+    data = b"hello"
+    with fsspec.open(f"ftp://{username}:{password}@{host}:{port}/afile", "wb") as f:
+        f.write(data)
+    fs, url = fsspec.core.url_to_fs(
+        f"simplecache::ftp://{username}:{password}@{host}:{port}/afile"
+    )
+    assert url == "/afile"
+    fs, url = fsspec.core.url_to_fs(f"ftp://{username}:{password}@{host}:{port}/afile")
+    assert url == "/afile"
+
+    with fsspec.open(f"ftp://{username}:{password}@{host}:{port}/afile.zip", "wb") as f:
+        import zipfile
+
+        with zipfile.ZipFile(f, "w") as z:
+            with z.open("inner", "w") as f2:
+                f2.write(b"hello")
+        f.write(data)
+
+    fs, url = fsspec.core.url_to_fs(
+        f"zip://inner::ftp://{username}:{password}@{host}:{port}/afile.zip"
+    )
+    assert url == "inner"
+    fs, url = fsspec.core.url_to_fs(
+        f"simplecache::zip::ftp://{username}:{password}@{host}:{port}/afile.zip"
+    )
+    assert url == ""
+
+
+def test_target_protocol_options(ftp_writable):
+    host, port, username, password = ftp_writable
+    data = {"afile": b"hello"}
+    options = {"host": host, "port": port, "username": username, "password": password}
+    with tempzip(data) as lfile, fsspec.open(
+        "ftp:///archive.zip", "wb", **options
+    ) as f:
+        f.write(open(lfile, "rb").read())
+    with fsspec.open(
+        "zip://afile",
+        "rb",
+        target_protocol="ftp",
+        target_options=options,
+        fo="archive.zip",
+    ) as f:
+        assert f.read() == data["afile"]
+
+
+def test_chained_url(ftp_writable):
+    host, port, username, password = ftp_writable
+    data = {"afile": b"hello"}
+    cls = fsspec.get_filesystem_class("ftp")
+    fs = cls(host=host, port=port, username=username, password=password)
+    with tempzip(data) as lfile:
+        fs.put_file(lfile, "archive.zip")
+
+    urls = [
+        "zip://afile",
+        "zip://afile::simplecache",
+        "simplecache::zip://afile",
+        "simplecache::zip://afile::simplecache",
+    ]
+    for url in urls:
+        url += f"::ftp://{username}:{password}@{host}:{port}/archive.zip"
+        with fsspec.open(url, "rb") as f:
+            assert f.read() == data["afile"]
+
+
+def test_automkdir_local():
+    fs, _ = fsspec.core.url_to_fs("file://", auto_mkdir=True)
+    assert fs.auto_mkdir is True
